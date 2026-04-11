@@ -24,3 +24,11 @@
   conda run -n astro python backend/app/recommender/train_recommenders.py
   conda run -n astro python backend/app/recommender/precompute_recommendations.py --top-k 5
 - Outcome: student/instructor rankers trained and precomputed top-k outputs generated.
+
+## 2026-04-12 01:34 - GitHub Copilot (GPT-5.3-Codex)
+- User request applied: repopulate stale dev prefill logins that were returning 401.
+- Commands run:
+  `"/media/smayan/500GB SSD/Datahack 4.0/.venv/bin/python" -m pip install --force-reinstall "bcrypt==4.0.1"`
+  `"/media/smayan/500GB SSD/Datahack 4.0/.venv/bin/python" scripts/seed_demo_accounts.py`
+  Login validation for `demo_student`, `demo_instructor`, `demo_admin` via `POST /auth/login`.
+- Outcome: all three demo logins now authenticate successfully (HTTP 200).

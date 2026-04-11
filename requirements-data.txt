@@ -2,6 +2,6 @@
 # Install with: pip install -r requirements-data.txt
 
 numpy>=1.26.0
-pandas>=2.2.0
+pandas==2.2.3
 scikit-learn>=1.4.0
 kaggle>=1.6.0

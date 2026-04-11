@@ -23,3 +23,8 @@
 - Added LightGBM LambdaMART training pipeline for student + instructor rankers with ranking metrics.
 - Added batch precompute script for role-serving top-k outputs.
 - Trained models and generated artifacts/precomputed tables in `astro` env.
+
+## 2026-04-12 01:34 - GitHub Copilot (GPT-5.3-Codex)
+- Investigated stale demo login failures and traced root cause to auth register returning 500 from `passlib` + `bcrypt` runtime incompatibility.
+- Installed `bcrypt==4.0.1`, reseeded demo accounts via `scripts/seed_demo_accounts.py`, and verified `/auth/login` returns 200 for `demo_student`, `demo_instructor`, and `demo_admin`.
+- Pinned `bcrypt==4.0.1` in `requirements.txt` to prevent recurrence in fresh environments.

@@ -10,11 +10,19 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const token = localStorage.getItem('ll_token');
     if (!token) { setLoading(false); return; }
-    getMe()
+
+    const withTimeout = (promise, ms = 8000) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Auth bootstrap timeout')), ms)),
+      ]);
+
+    withTimeout(getMe())
       .then((me) => setUser(me))
       .catch(() => {
         localStorage.removeItem('ll_token');
         localStorage.removeItem('ll_user');
+        localStorage.removeItem('ll_learner_id');
       })
       .finally(() => setLoading(false));
   }, []);

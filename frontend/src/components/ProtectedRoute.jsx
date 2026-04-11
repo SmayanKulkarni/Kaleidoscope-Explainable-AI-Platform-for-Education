@@ -4,7 +4,16 @@ import { useAuth } from '../context/AuthContext';
 export default function ProtectedRoute({ allowedRoles }) {
   const { user, loading } = useAuth();
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 bg-surface">
+        <div className="text-center text-on-surface-variant font-label">
+          <div className="material-symbols-outlined animate-spin text-3xl mb-2">progress_activity</div>
+          <p>Checking session...</p>
+        </div>
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/login" replace />;
   
   if (!allowedRoles.includes(user.role)) {

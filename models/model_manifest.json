@@ -1,16 +1,15 @@
 {
-  "gbm": {
+  "model_version": "gbm-v3",
+  "training_timestamp": "2026-04-11T20:20:16.801812+00:00",
+  "metrics_snapshot": {
     "test_auc_roc": 0.9363,
     "test_avg_precision": 0.8224,
     "test_f1": 0.7848,
     "test_brier_score": 0.0912
   },
-  "rf": {
-    "test_auc_roc": 0.9381,
-    "test_avg_precision": 0.8286,
-    "test_f1": 0.769,
-    "test_brier_score": 0.0942
-  },
+  "feature_schema_hash": "e1d6d02c595ff31556dd4cd435fbd138d7d956f3ce66a945d2bf2b46c4678324",
+  "data_fingerprint": "a63379624db88f421e1126b74233fb8de275fd7a737dffa6fd9fc6604f87f450",
+  "n_features": 21,
   "feature_names": [
     "login_frequency_weekly",
     "avg_session_duration_min",
@@ -34,11 +33,5 @@
     "engagement_latent_2",
     "engagement_latent_3"
   ],
-  "model_version": "gbm-v3",
-  "n_features": 21,
-  "latent_features_added": [
-    "engagement_latent_1",
-    "engagement_latent_2",
-    "engagement_latent_3"
-  ]
+  "strict_mode": false
 }
