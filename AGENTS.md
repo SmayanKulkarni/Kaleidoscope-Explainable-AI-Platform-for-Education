@@ -1,18 +1,3 @@
-# XAI Recommendation System - Agent Protocols (Cursor)
-
-**CRITICAL INSTRUCTION**: Upon instantiation, you must immediately read the following files before taking any action:
-1. `.agents/context/LLM_WIKI.md` -> For project architecture, modules, algorithms, and non-negotiable rules.
-2. `.agents/context/AGENT_MEMORY.md` -> For active context, sprint goals, and open problems.
-
-## Workflow Rules
-- You are working on the XAI Learning Recommendation System.
-- NEVER invent explanation outputs directly via LLM. All explainability must be routed through code utilizing standard algorithms (TreeSHAP, DiCE, CEM etc). 
-- Use the **code-review-graph MCP** server tools for easy debugging, structural navigation, and finding dependencies.
-- When you execute a step, finish a sprint task, or refactor logic, you MUST APPEND an entry documenting your action to `.agents/logs/AGENT_LEDGER.md` using the provided schema.
-- Update `.agents/context/AGENT_MEMORY.md` whenever the active sprint goals or open problems change.
-<<<<<<< HEAD
-=======
-
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
 
@@ -51,4 +36,3 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
