@@ -248,3 +248,34 @@
   - pytest tests/ --ignore=tests/test_api_smoke.py — **30/30 pass** in 4.14s.
   - db_config, all 4 stores, s3_loader, implicit_aggregator, engagement_model — all import cleanly.
 
+
+---
+
+### [2026-04-11 17:35] Cascade — Fix PredictionLogger + Wire /simulate Endpoint
+
+#### PredictionLogger → PostgreSQL migration
+- **Files Modified:**
+  - ackend/app/mlops/prediction_logger.py — Added rom backend.app.db_config import make_engine; refactored __init__ to use make_engine("predictions") when db_url="" (same pattern as all other stores). Updated docstring.
+  - ackend/app/main.py — Removed hardcoded db_url=f"sqlite:///{DATA_DIR / 'predictions.db'}" from PredictionLogger() init; self-resolves via db_config.
+  - ackend/app/db_config.py — Updated docstring to include predictions as a 5th store.
+  - lembic/env.py — Added rom backend.app.mlops.prediction_logger import Base as PredictionBase; added to metadata merge loop so prediction_log table is included in Alembic autogenerate.
+- **Migration generated:** lembic/versions/f1a8243329d4_add_prediction_log.py — adds prediction_log table + ix_prediction_log_timestamp index.
+- **Migration applied:** lembic upgrade head ran clean (0d652f39389c → f1a8243329d4).
+
+#### /simulate endpoint — fully wired to Python MonteCarloSimulator
+- **Files Modified:**
+  - ackend/app/model/temporal_builder.py — Guarded rom data_loader import ... with 	ry/except ModuleNotFoundError; fallback uses rom backend.app.model.data_loader import ... so MonteCarloSimulator can be cleanly imported from main.py.
+  - ackend/app/main.py:
+    - Import: rom backend.app.model.temporal_builder import MonteCarloSimulator
+    - AppState: added mc_simulator: Optional[MonteCarloSimulator] = None
+    - lifespan(): loads data/temporal/transitions.pkl → MonteCarloSimulator(transitions); graceful warning if file missing.
+    - Added SimulateRequest schema: eatures: LearnerFeatures, current_week (default 6), 	arget_week (default 12), 
+_simulations (default 1000, max 10_000).
+    - /simulate endpoint: full implementation — validates current_week < target_week, strips latent features before passing to simulator, runs mc_simulator.simulate() with GBM model for outcome distribution, strips raw trajectories from response (too large).
+
+#### Tests added (17 new, all passing)
+- 	ests/test_mc_simulator.py (9 tests) — required keys, feature distributions completeness, n_simulations, week metadata, outcome distribution with/without model, invalid weeks validation, feature clipping bounds, reproducibility.
+- 	ests/test_prediction_logger.py (8 tests) — log, count, get_recent fields/ordering, get_feature_matrix, prune on max_rows, default constructor via db_config.
+
+- **Total test count: 47/47 passing.**
+

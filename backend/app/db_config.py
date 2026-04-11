@@ -2,7 +2,7 @@
 Central Database Configuration
 ================================
 Reads DATABASE_URL from the environment and provides a shared SQLAlchemy
-engine + session factory for all stores (auth, explanations, feedback, events).
+engine + session factory for all stores (auth, explanations, feedback, events, predictions).
 
 In local dev without DATABASE_URL: falls back to per-store SQLite files
 (backwards-compatible for running outside Docker).

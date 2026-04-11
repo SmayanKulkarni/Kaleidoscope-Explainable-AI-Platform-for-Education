@@ -125,9 +125,12 @@ class SHAPExplainer:
         sv_flat = sv[0].tolist()
 
         shap_vals   = dict(zip(self.feature_names, sv_flat))
-        base_value  = float(self.tree_explainer.expected_value
-                            if not isinstance(self.tree_explainer.expected_value, list)
-                            else self.tree_explainer.expected_value[1])
+        _ev = self.tree_explainer.expected_value
+        if isinstance(_ev, (list, np.ndarray)):
+            _ev_arr = np.asarray(_ev).ravel()
+            base_value = float(_ev_arr[-1])
+        else:
+            base_value = float(_ev)
         risk_score  = float(self.gbm_model.predict_proba(X)[0][1])
 
         return ExplainResult(

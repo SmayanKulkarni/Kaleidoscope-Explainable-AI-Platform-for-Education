@@ -17,22 +17,26 @@ from sqlalchemy import engine_from_config, create_engine
 
 from alembic import context
 
+from dotenv import load_dotenv
+load_dotenv()
+
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # ── Import ALL ORM models so autogenerate can see every table ─────────────────
-from backend.app.auth.models import Base as AuthBase                    # users, roles
-from backend.app.tracker.consistency_store import Base as ExplainBase   # explanation_records
-from backend.app.tracker.feedback_store import _Base as FeedbackBase    # feedback_records
-from backend.app.tracker.event_store import _Base as EventBase          # interaction_events
+from backend.app.auth.models import Base as AuthBase                        # users, roles
+from backend.app.tracker.consistency_store import Base as ExplainBase       # explanation_records
+from backend.app.tracker.feedback_store import _Base as FeedbackBase        # feedback_records
+from backend.app.tracker.event_store import _Base as EventBase              # interaction_events
+from backend.app.mlops.prediction_logger import Base as PredictionBase      # prediction_log
 
 # Combine all metadata into a single target for autogenerate
 from sqlalchemy import MetaData
 
 target_metadata = MetaData()
-for base in (AuthBase, ExplainBase, FeedbackBase, EventBase):
+for base in (AuthBase, ExplainBase, FeedbackBase, EventBase, PredictionBase):
     for table in base.metadata.tables.values():
         table.tometadata(target_metadata)
 

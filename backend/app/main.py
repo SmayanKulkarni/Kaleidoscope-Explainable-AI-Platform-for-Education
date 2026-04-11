@@ -29,7 +29,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -58,6 +58,7 @@ from backend.app.model.s3_loader import download_models, upload_models
 from backend.app.narrator.llm_narrator import LLMNarrator
 from backend.app.tracker.consistency_store import ExplanationStore
 from backend.app.tracker.drift_detector import ExplanationDriftDetector
+from backend.app.model.temporal_builder import MonteCarloSimulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class AppState:
     feedback_store: Optional[FeedbackStore] = None
     event_store: Optional[EventStore] = None
     llm_narrator: Optional[LLMNarrator] = None
+    mc_simulator: Optional[MonteCarloSimulator] = None
     model_version:  str = "unknown"
 
 
@@ -127,7 +129,8 @@ async def lifespan(app: FastAPI):
         blob = _load_pkl(train_path)
         state.X_train     = blob["X"]
         state.y_train     = blob["y"]
-        state.learner_ids = blob.get("learner_ids")
+        _ids = blob.get("learner_ids")
+        state.learner_ids = np.asarray(_ids, dtype=object) if _ids is not None else None
         log.info("Training data loaded  X=%s", state.X_train.shape)
 
     # ── GBM ──
@@ -232,9 +235,7 @@ async def lifespan(app: FastAPI):
     state.trust_scorer    = TrustScorer()
     state.explanation_store = ExplanationStore()
     state.drift_detector  = ExplanationDriftDetector()
-    state.prediction_logger = PredictionLogger(
-        db_url=f"sqlite:///{DATA_DIR / 'predictions.db'}"
-    )
+    state.prediction_logger = PredictionLogger()
     state.feedback_store = FeedbackStore()
     log.info("FeedbackStore initialised")
 
@@ -260,6 +261,16 @@ async def lifespan(app: FastAPI):
         log.info("LLMNarrator initialised  model=%s", state.llm_narrator.model)
     else:
         log.warning("LLMNarrator disabled — set GROQ_API_KEY to enable narration")
+
+    # ── Monte Carlo Simulator ──
+    transitions_path = DATA_DIR / "temporal" / "transitions.pkl"
+    if transitions_path.exists():
+        with open(transitions_path, "rb") as f:
+            transitions = pickle.load(f)
+        state.mc_simulator = MonteCarloSimulator(transitions)
+        log.info("MonteCarloSimulator loaded — %d transition rows", len(transitions.get("deltas", [])))
+    else:
+        log.warning("transitions.pkl not found — /simulate will return empty distributions")
 
     log.info("Startup complete — device=%s", DEVICE)
     yield
@@ -567,9 +578,43 @@ def counterfactual(features: LearnerFeatures):
     return resp
 
 
+class SimulateRequest(BaseModel):
+    features:      LearnerFeatures
+    current_week:  int = Field(default=6,    ge=1, le=52)
+    target_week:   int = Field(default=12,   ge=2, le=52)
+    n_simulations: int = Field(default=1000, ge=10, le=10_000)
+
+
 @app.post("/simulate")
-def simulate(features: LearnerFeatures):
-    return {"feature_distributions": {}, "outcome_distribution": {}, "message": "Rust MC — Phase 5 pending"}
+def simulate(req: SimulateRequest):
+    if state.mc_simulator is None:
+        return {
+            "feature_distributions": {},
+            "outcome_distribution": {},
+            "current_week":  req.current_week,
+            "target_week":   req.target_week,
+            "n_simulations": req.n_simulations,
+            "message": "transitions.pkl not found — run temporal_builder.py first",
+        }
+
+    if req.current_week >= req.target_week:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="target_week must be greater than current_week")
+
+    current_features = req.features.model_dump(
+        exclude={"engagement_latent_1", "engagement_latent_2", "engagement_latent_3"}
+    )
+
+    result = state.mc_simulator.simulate(
+        current_features=current_features,
+        current_week=req.current_week,
+        target_week=req.target_week,
+        n_simulations=req.n_simulations,
+        model=state.gbm_model,
+    )
+    # Strip individual trajectories from the response (too large)
+    result.pop("trajectories", None)
+    return result
 
 
 @app.get("/history/{learner_id}")

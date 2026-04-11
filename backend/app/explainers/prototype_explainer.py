@@ -65,7 +65,7 @@ class PrototypeExplainer:
     ):
         self.feature_names = feature_names
         self.y_train       = np.asarray(y_train)
-        self.learner_ids   = np.asarray(learner_ids)
+        self.learner_ids   = np.asarray(learner_ids, dtype=object)
         self.X_train       = X_train
 
         self.scaler   = StandardScaler().fit(X_train)
