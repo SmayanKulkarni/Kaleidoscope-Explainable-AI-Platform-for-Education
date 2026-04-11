@@ -37,12 +37,11 @@ mlruns/
 mlartifacts/
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Data  (raw CSVs managed by Git LFS; processed pickles excluded)
+# Data  (all tracked via Git LFS — see .gitattributes)
 # ──────────────────────────────────────────────────────────────────────────────
-data/raw/
-data/*.pkl
-data/temporal/*.pkl
-data/learners.csv
+# NOTE: raw CSVs, learners.csv, pkl files, and temporal pickles are ALL tracked
+# via Git LFS so teammates can pull them directly. Only runtime databases
+# (auth.db, events.db, etc.) remain excluded.
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Rust / maturin build outputs
