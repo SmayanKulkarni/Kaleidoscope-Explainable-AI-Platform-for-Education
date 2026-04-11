@@ -1,0 +1,13 @@
+{
+  "generator": "groq_archetype_blended_synth",
+  "groq_model": "llama-3.3-70b-versatile",
+  "seed": 42,
+  "student_rows": 51000,
+  "instructor_rows": 50991,
+  "student_unique_students": 15936,
+  "instructor_unique_instructors": 350,
+  "output_files": {
+    "student": "data/synthetic/recommendations/student_recommendation_dataset.csv",
+    "instructor": "data/synthetic/recommendations/instructor_recommendation_dataset.csv"
+  }
+}
