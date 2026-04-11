@@ -600,6 +600,7 @@ class MonteCarloSimulator:
         target_week: int,
         n_simulations: int = 1000,
         model=None,
+        model_feature_names: list = None,
     ) -> dict:
         """
         Run Monte Carlo forward simulation.
@@ -668,7 +669,11 @@ class MonteCarloSimulator:
 
         # If model provided, compute outcome distribution
         if model is not None:
-            X_sim = np.array([[t[f] for f in FEATURE_COLUMNS] for t in trajectories])
+            # Use model_feature_names if provided (handles extra/duplicate features
+            # from training pipelines that append latent columns). Fall back to
+            # FEATURE_COLUMNS, padding any missing key with 0.0.
+            _cols = model_feature_names if model_feature_names else FEATURE_COLUMNS
+            X_sim = np.array([[t.get(f, 0.0) for f in _cols] for t in trajectories])
             probs = model.predict_proba(X_sim)[:, 1]
             result["outcome_distribution"] = {
                 "dropout_prob_mean": float(np.mean(probs)),

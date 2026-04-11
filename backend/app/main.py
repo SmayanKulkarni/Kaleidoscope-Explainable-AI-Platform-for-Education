@@ -192,67 +192,87 @@ async def lifespan(app: FastAPI):
 
     # ── Phase 2: Explainers + Evaluators ──
     if state.gbm_model is not None and state.feature_names:
-        state.shap_explainer = SHAPExplainer(
-            gbm_model     = state.gbm_model,
-            feature_names = state.feature_names,
-            lstm_model    = state.lstm_model,
-            X_background  = _X_background,
-        )
-        log.info("SHAPExplainer initialised")
-
-        state.archipelago_explainer = ArchipelagoExplainer(
-            tree_explainer = state.shap_explainer.tree_explainer,
-            feature_names  = state.feature_names,
-        )
-        log.info("ArchipelagoExplainer initialised")
+        try:
+            state.shap_explainer = SHAPExplainer(
+                gbm_model     = state.gbm_model,
+                feature_names = state.feature_names,
+                lstm_model    = state.lstm_model,
+                X_background  = _X_background,
+            )
+            log.info("SHAPExplainer initialised")
+            state.archipelago_explainer = ArchipelagoExplainer(
+                tree_explainer = state.shap_explainer.tree_explainer,
+                feature_names  = state.feature_names,
+            )
+            log.info("ArchipelagoExplainer initialised")
+        except Exception as _shap_err:
+            log.warning("SHAPExplainer/ArchipelagoExplainer failed to initialise: %s", _shap_err)
 
     if state.gbm_model is not None and state.X_train is not None:
-        state.dice_explainer = DiCEExplainer(
-            model         = state.gbm_model,
-            X_train       = state.X_train,
-            feature_names = state.feature_names,
-            y_train       = state.y_train,
-        )
-        log.info("DiCEExplainer initialised")
+        try:
+            state.dice_explainer = DiCEExplainer(
+                model         = state.gbm_model,
+                X_train       = state.X_train,
+                feature_names = state.feature_names,
+                y_train       = state.y_train,
+            )
+            log.info("DiCEExplainer initialised")
+        except Exception as _dice_err:
+            log.warning("DiCEExplainer failed to initialise (dice_ml/pandas compat): %s", _dice_err)
 
         def _predict_fn(X):
             return (state.gbm_model.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
-        state.anchors_explainer = AnchorsExplainer(
-            predict_fn    = _predict_fn,
-            X_train       = state.X_train,
-            feature_names = state.feature_names,
-        )
-        log.info("AnchorsExplainer initialised")
+        try:
+            state.anchors_explainer = AnchorsExplainer(
+                predict_fn    = _predict_fn,
+                X_train       = state.X_train,
+                feature_names = state.feature_names,
+            )
+            log.info("AnchorsExplainer initialised")
+        except Exception as _anchors_err:
+            log.warning("AnchorsExplainer failed to initialise: %s", _anchors_err)
 
-        state.prototype_explainer = PrototypeExplainer(
-            X_train       = state.X_train,
-            y_train       = state.y_train,
-            learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
-            feature_names = state.feature_names,
-        )
-        log.info("PrototypeExplainer initialised")
+        try:
+            state.prototype_explainer = PrototypeExplainer(
+                X_train       = state.X_train,
+                y_train       = state.y_train,
+                learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
+                feature_names = state.feature_names,
+            )
+            log.info("PrototypeExplainer initialised")
+        except Exception as _proto_err:
+            log.warning("PrototypeExplainer failed to initialise: %s", _proto_err)
 
-        state.uncertainty_estimator = UncertaintyEstimator(
-            model = state.gbm_model,
-            X_cal = state.X_train,
-            y_cal = state.y_train,
-        )
-        log.info("UncertaintyEstimator initialised")
+        try:
+            state.uncertainty_estimator = UncertaintyEstimator(
+                model = state.gbm_model,
+                X_cal = state.X_train,
+                y_cal = state.y_train,
+            )
+            log.info("UncertaintyEstimator initialised")
+        except Exception as _unc_err:
+            log.warning("UncertaintyEstimator failed to initialise: %s", _unc_err)
 
-        state.causal_annotator = CausalAnnotator(
-            X_train       = state.X_train,
-            y_train       = state.y_train,
-            feature_names = state.feature_names,
-        )
-        log.info("CausalAnnotator initialised (DoWhy)")
+        try:
+            state.causal_annotator = CausalAnnotator(
+                X_train       = state.X_train,
+                y_train       = state.y_train,
+                feature_names = state.feature_names,
+            )
+            log.info("CausalAnnotator initialised (DoWhy)")
+        except Exception as _causal_err:
+            log.warning("CausalAnnotator failed to initialise: %s", _causal_err)
 
-        state.action_ranker = ActionRanker(
-            feature_names    = state.feature_names,
-            X_train          = state.X_train,
-            causal_annotator = state.causal_annotator,
-        )
-        log.info("ActionRanker initialised")
+        try:
+            state.action_ranker = ActionRanker(
+                feature_names    = state.feature_names,
+                X_train          = state.X_train,
+                causal_annotator = state.causal_annotator,
+            )
+            log.info("ActionRanker initialised")
+        except Exception as _ar_err:
+            log.warning("ActionRanker failed to initialise: %s", _ar_err)
 
     state.trust_scorer    = TrustScorer()
     state.explanation_store = ExplanationStore()
@@ -825,6 +845,7 @@ def simulate(req: SimulateRequest):
         target_week=req.target_week,
         n_simulations=req.n_simulations,
         model=state.gbm_model,
+        model_feature_names=state.feature_names,
     )
     # Strip individual trajectories from the response (too large)
     result.pop("trajectories", None)
