@@ -51,13 +51,65 @@ jobs:
         run: ruff check backend/ --select E,F,W,I --ignore E501
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short -q
+        run: |
+          pytest tests/ -v --tb=short -q \
+            --junitxml=pytest-results.xml \
+            --override-ini="junit_suite_name=xai-backend"
         continue-on-error: false
 
-      - name: Upload test results
+      - name: Upload test results (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-results
+          name: pytest-results-${{ github.run_id }}
           path: pytest-results.xml
-          if-no-files-found: ignore
+          if-no-files-found: warn
+
+  smoke:
+    name: Smoke Tests (post-deploy gate)
+    runs-on: ubuntu-latest
+    needs: lint-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Health check
+        run: |
+          curl -sf --max-time 10 "https://${{ secrets.EC2_HOST }}/health" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['status']=='ok', d"
+          echo "✓ /health OK"
+
+      - name: Predict endpoint
+        run: |
+          PAYLOAD='{"login_frequency_weekly":3,"avg_session_duration_min":45,"forum_posts_count":2,"video_completion_rate":0.6,"quiz_avg_score":55,"quiz_completion_rate":0.7,"assignment_submission_rate":0.65,"days_since_last_activity":7,"prior_course_completions":1,"current_week_in_course":6,"missed_deadlines_count":2,"help_requests_count":1,"engagement_latent_1":0,"engagement_latent_2":0,"engagement_latent_3":0}'
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST "https://${{ secrets.EC2_HOST }}/predict" \
+            -H "Content-Type: application/json" -d "$PAYLOAD")
+          [ "$STATUS" = "200" ] || (echo "ERROR: /predict returned $STATUS"; exit 1)
+          echo "✓ /predict OK (HTTP $STATUS)"
+
+      - name: Retrain endpoint rejects unauthenticated calls
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://${{ secrets.EC2_HOST }}/mlops/retrain")
+          [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ] || \
+            (echo "ERROR: /mlops/retrain should reject unauthenticated (got $STATUS)"; exit 1)
+          echo "✓ /mlops/retrain auth guard OK (HTTP $STATUS)"
+
+      - name: Reload endpoint rejects unauthenticated calls
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://${{ secrets.EC2_HOST }}/mlops/reload")
+          [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ] || \
+            (echo "ERROR: /mlops/reload should reject unauthenticated (got $STATUS)"; exit 1)
+          echo "✓ /mlops/reload auth guard OK (HTTP $STATUS)"
+
+      - name: Drift report
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://${{ secrets.EC2_HOST }}/mlops/drift-report")
+          [ "$STATUS" = "200" ] || (echo "ERROR: /mlops/drift-report returned $STATUS"; exit 1)
+          echo "✓ /mlops/drift-report OK"
+
+      - name: Smoke test summary
+        if: always()
+        run: |
+          echo "### Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Endpoints checked: /health, /predict, /mlops/retrain (auth), /mlops/reload (auth), /mlops/drift-report" >> $GITHUB_STEP_SUMMARY

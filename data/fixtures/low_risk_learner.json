@@ -1,0 +1,17 @@
+{
+  "login_frequency_weekly": 6.0,
+  "avg_session_duration_min": 90.0,
+  "forum_posts_count": 8,
+  "video_completion_rate": 0.95,
+  "quiz_avg_score": 82.0,
+  "quiz_completion_rate": 0.92,
+  "assignment_submission_rate": 0.95,
+  "days_since_last_activity": 1,
+  "prior_course_completions": 3,
+  "current_week_in_course": 5,
+  "missed_deadlines_count": 0,
+  "help_requests_count": 2,
+  "engagement_latent_1": 0.0,
+  "engagement_latent_2": 0.0,
+  "engagement_latent_3": 0.0
+}

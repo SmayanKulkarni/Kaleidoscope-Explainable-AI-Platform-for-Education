@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 import mlflow
+from backend.app.mlops.mlflow_config import configure_mlflow
 import numpy as np
 import optuna
 import torch
@@ -307,8 +308,7 @@ def _save_if_better(name: str, result: dict, baseline_auc_key: str = "test_auc")
 
 
 def _log_to_mlflow(name: str, result: dict):
-    mlflow.set_tracking_uri(str(MLRUNS_DIR))
-    mlflow.set_experiment("xai-dropout-risk")
+    configure_mlflow(alias="tune")
     with mlflow.start_run(run_name=f"{name}-tuned"):
         mlflow.log_params(result.get("best_params", {}))
         for k, v in result.items():

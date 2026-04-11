@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -57,6 +59,7 @@ class PredictionLogger:
         self,
         db_url: str = "",
         max_rows: int = 10_000,
+        prune_every: int = 100,
     ):
         if db_url:
             self.engine = create_engine(
@@ -67,9 +70,15 @@ class PredictionLogger:
         else:
             self.engine = make_engine("predictions")
         Base.metadata.create_all(self.engine)
-        self.Session  = sessionmaker(bind=self.engine)
-        self.max_rows = max_rows
-        log.info("PredictionLogger initialised  max_rows=%d", max_rows)
+        self.Session     = sessionmaker(bind=self.engine)
+        self.max_rows    = max_rows
+        self.prune_every = prune_every
+        self._insert_count  = 0
+        self._prune_count   = 0
+        self._prune_time_ms = 0.0
+        self._lock          = threading.Lock()
+        log.info("PredictionLogger initialised  max_rows=%d  prune_every=%d",
+                 max_rows, prune_every)
 
     def log(
         self,
@@ -88,25 +97,46 @@ class PredictionLogger:
             session.add(record)
             session.commit()
 
-        self._prune()
+        with self._lock:
+            self._insert_count += 1
+            should_prune = (self._insert_count % self.prune_every) == 0
+
+        if should_prune:
+            t = threading.Thread(target=self._prune, daemon=True)
+            t.start()
 
     def _prune(self):
-        """Delete oldest rows if count exceeds max_rows."""
-        with self.Session() as session:
-            count = session.query(func.count(PredictionRecord.id)).scalar()
-            if count > self.max_rows:
-                cutoff_id = (
-                    session.query(PredictionRecord.id)
-                    .order_by(desc(PredictionRecord.id))
-                    .offset(self.max_rows)
-                    .limit(1)
-                    .scalar()
-                )
-                if cutoff_id:
-                    session.query(PredictionRecord).filter(
-                        PredictionRecord.id <= cutoff_id
-                    ).delete()
-                    session.commit()
+        """Delete oldest rows if count exceeds max_rows. Runs in background thread."""
+        t0 = time.monotonic()
+        try:
+            with self.Session() as session:
+                count = session.query(func.count(PredictionRecord.id)).scalar()
+                if count > self.max_rows:
+                    cutoff_id = (
+                        session.query(PredictionRecord.id)
+                        .order_by(desc(PredictionRecord.id))
+                        .offset(self.max_rows)
+                        .limit(1)
+                        .scalar()
+                    )
+                    if cutoff_id:
+                        deleted = session.query(PredictionRecord).filter(
+                            PredictionRecord.id <= cutoff_id
+                        ).delete()
+                        session.commit()
+                        elapsed_ms = (time.monotonic() - t0) * 1000
+                        log.info(
+                            "PredictionLogger prune: deleted=%d  remaining=%d  elapsed=%.1fms",
+                            deleted, self.max_rows, elapsed_ms,
+                        )
+        except Exception as exc:
+            log.error("PredictionLogger prune error: %s", exc)
+            return
+
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        with self._lock:
+            self._prune_count   += 1
+            self._prune_time_ms += elapsed_ms
 
     def get_recent(self, n: int = 100) -> list[dict]:
         with self.Session() as session:
@@ -139,3 +169,15 @@ class PredictionLogger:
     def count(self) -> int:
         with self.Session() as session:
             return session.query(func.count(PredictionRecord.id)).scalar()
+
+    def prune_stats(self) -> dict:
+        """Return accumulated prune job counters (useful for /mlops/health)."""
+        with self._lock:
+            return {
+                "insert_count":    self._insert_count,
+                "prune_count":     self._prune_count,
+                "prune_avg_ms":    round(
+                    self._prune_time_ms / max(self._prune_count, 1), 2
+                ),
+                "next_prune_in":   self.prune_every - (self._insert_count % self.prune_every),
+            }

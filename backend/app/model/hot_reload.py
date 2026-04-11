@@ -37,6 +37,8 @@ class HotReloadResult:
     components_reloaded: list[str]
     error:         Optional[str] = None
     elapsed_sec:   float = 0.0
+    canary_fraction: float = 1.0
+    mode:          str = "full"   # "full" | "canary" | "canary-abort"
 
     def to_dict(self) -> dict:
         return {
@@ -46,21 +48,48 @@ class HotReloadResult:
             "components_reloaded": self.components_reloaded,
             "error":               self.error,
             "elapsed_sec":         round(self.elapsed_sec, 2),
+            "canary_fraction":     self.canary_fraction,
+            "mode":                self.mode,
         }
 
 
-def hot_reload(state, data_dir: Path, models_dir: Path, device) -> HotReloadResult:
+def hot_reload(
+    state,
+    data_dir: Path,
+    models_dir: Path,
+    device,
+    canary_fraction: float = 1.0,
+) -> HotReloadResult:
     """
     Reload model artifacts from disk and re-initialise all dependent components.
     Performs an atomic swap: AppState is only mutated after ALL inits succeed.
 
     Parameters
     ----------
-    state      : AppState instance (the FastAPI global state)
-    data_dir   : Path to data/ directory (for train.pkl)
-    models_dir : Path to models/ directory (gbm.pkl, rf.pkl, lstm.pt, etc.)
-    device     : torch.device
+    state            : AppState instance (the FastAPI global state)
+    data_dir         : Path to data/ directory (for train.pkl)
+    models_dir       : Path to models/ directory (gbm.pkl, rf.pkl, etc.)
+    device           : torch.device
+    canary_fraction  : float in [0.0, 1.0]
+        0.0  → abort canary: remove canary model, fall back fully to production
+        (0, 1) → load new model as canary; route that fraction of /predict calls
+        1.0  → full reload (default): atomically swap production model
     """
+    canary_fraction = max(0.0, min(1.0, canary_fraction))
+
+    # ── Canary abort: discard staged canary, keep current production ─────────
+    if canary_fraction == 0.0:
+        state.canary_gbm_model  = None
+        state.canary_fraction   = 0.0
+        log.info("hot_reload: canary aborted — production model unchanged")
+        return HotReloadResult(
+            success=True,
+            model_version=state.model_version,
+            feature_count=len(state.feature_names),
+            components_reloaded=[],
+            canary_fraction=0.0,
+            mode="canary-abort",
+        )
     t_start = time.time()
     staging: dict = {}
     reloaded: list[str] = []
@@ -223,7 +252,27 @@ def hot_reload(state, data_dir: Path, models_dir: Path, device) -> HotReloadResu
             elapsed_sec=elapsed,
         )
 
-    # ── Atomic swap into AppState ─────────────────────────────────────────────
+    elapsed = time.time() - t_start
+
+    if canary_fraction < 1.0:
+        # ── Canary mode: store new GBM as canary; leave production intact ─────
+        state.canary_gbm_model = staging["gbm_model"]
+        state.canary_fraction  = canary_fraction
+        log.info(
+            "hot_reload CANARY  version=%s  fraction=%.0f%%  elapsed=%.2fs",
+            staging["model_version"], canary_fraction * 100, elapsed,
+        )
+        return HotReloadResult(
+            success=True,
+            model_version=staging["model_version"],
+            feature_count=len(staging["feature_names"]),
+            components_reloaded=["canary_gbm_model"],
+            elapsed_sec=elapsed,
+            canary_fraction=canary_fraction,
+            mode="canary",
+        )
+
+    # ── Full atomic swap into AppState ────────────────────────────────────────
     state.gbm_model            = staging["gbm_model"]
     state.rf_model             = staging["rf_model"]
     state.feature_names        = staging["feature_names"]
@@ -242,8 +291,10 @@ def hot_reload(state, data_dir: Path, models_dir: Path, device) -> HotReloadResu
     state.drift_monitor        = staging["drift_monitor"]
     state.drift_detector       = staging["drift_detector"]
     state.trust_scorer         = staging["trust_scorer"]
+    # Clear any active canary now that full swap is done
+    state.canary_gbm_model = None
+    state.canary_fraction  = 0.0
 
-    elapsed = time.time() - t_start
     log.info(
         "hot_reload COMPLETE  version=%s  features=%d  components=%d  elapsed=%.2fs",
         state.model_version, len(state.feature_names), len(reloaded), elapsed,
@@ -254,4 +305,6 @@ def hot_reload(state, data_dir: Path, models_dir: Path, device) -> HotReloadResu
         feature_count=len(state.feature_names),
         components_reloaded=reloaded,
         elapsed_sec=elapsed,
+        canary_fraction=1.0,
+        mode="full",
     )

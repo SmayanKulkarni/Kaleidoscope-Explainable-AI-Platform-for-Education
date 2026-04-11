@@ -19,17 +19,21 @@ Endpoints:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 import pickle
+import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import numpy as np
 import torch
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -100,10 +104,13 @@ class AppState:
     event_store: Optional[EventStore] = None
     llm_narrator: Optional[LLMNarrator] = None
     mc_simulator: Optional[MonteCarloSimulator] = None
-    model_version:  str = "unknown"
+    model_version:   str = "unknown"
+    canary_gbm_model = None
+    canary_fraction: float = 0.0
 
 
 state = AppState()
+MLOPS_CONTROL_LOCK = Lock()
 
 
 def _load_pkl(path: Path) -> dict:
@@ -350,6 +357,29 @@ def _require_model():
         raise HTTPException(status_code=503, detail="SHAP explainer not initialised")
 
 
+def require_mlops_operator(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    x_mlops_token: Optional[str] = Header(default=None),
+) -> str:
+    """
+    Guard for control-plane MLOps operations.
+
+    Access is granted if either:
+    - caller is an authenticated admin user, or
+    - caller provides a valid automation token in X-MLOPS-Token header.
+    """
+    if current_user is not None:
+        if current_user.role == "admin":
+            return f"admin:{current_user.username}"
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    automation_token = os.getenv("MLOPS_AUTOMATION_TOKEN", "")
+    if automation_token and x_mlops_token and hmac.compare_digest(x_mlops_token, automation_token):
+        return "automation-token"
+
+    raise HTTPException(status_code=401, detail="Unauthorized MLOps operation")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Endpoints — Phase 1
 # ──────────────────────────────────────────────────────────────────────────────
@@ -390,6 +420,13 @@ def predict(features: LearnerFeatures, bg: BackgroundTasks, model: str = "gbm"):
         proba = state.lstm_model.predict_proba(seq)
         risk_score = float(proba[0, 1])
         model_used = "lstm"
+    elif (
+        state.canary_gbm_model is not None
+        and state.canary_fraction > 0.0
+        and random.random() < state.canary_fraction
+    ):
+        risk_score = float(state.canary_gbm_model.predict_proba(X)[0][1])
+        model_used = "gbm-canary"
     else:
         risk_score = float(state.gbm_model.predict_proba(X)[0][1])
         model_used = "gbm"
@@ -733,7 +770,7 @@ def get_learner_events(learner_id: str, limit: int = 100):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @app.post("/mlops/retrain")
-def trigger_retrain(min_events: int = 0):
+def trigger_retrain(min_events: int = 0, operator: str = Depends(require_mlops_operator)):
     """
     Trigger a full implicit+explicit feedback retraining cycle.
     Steps:
@@ -748,46 +785,61 @@ def trigger_retrain(min_events: int = 0):
 
     Query param `min_events`: override the minimum event count guard (default 0 = no guard).
     """
-    if state.event_store is None or state.feedback_store is None:
-        raise HTTPException(503, "Event store or feedback store not initialised")
+    if not MLOPS_CONTROL_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another MLOps control operation is already running")
+    try:
+        if state.event_store is None or state.feedback_store is None:
+            raise HTTPException(503, "Event store or feedback store not initialised")
 
-    if min_events > 0 and not (state.event_store.count() >= min_events):
-        return {
-            "queued":  False,
-            "reason":  f"Only {state.event_store.count()} events recorded (need ≥{min_events})",
-            "n_events": state.event_store.count(),
-        }
+        if min_events > 0 and not (state.event_store.count() >= min_events):
+            return {
+                "queued":  False,
+                "reason":  f"Only {state.event_store.count()} events recorded (need ≥{min_events})",
+                "n_events": state.event_store.count(),
+            }
 
-    pipeline = RetrainPipeline(
-        event_store    = state.event_store,
-        feedback_store = state.feedback_store,
-        data_dir       = DATA_DIR,
-        models_dir     = MODELS_DIR,
-    )
+        pipeline = RetrainPipeline(
+            event_store    = state.event_store,
+            feedback_store = state.feedback_store,
+            data_dir       = DATA_DIR,
+            models_dir     = MODELS_DIR,
+        )
 
-    log.info("POST /mlops/retrain triggered")
-    result = pipeline.run(trigger="api")
-    if result.success:
-        uploaded = upload_models(MODELS_DIR)
-        log.info("S3: uploaded %d artifact(s) after retrain", len(uploaded))
-    return result.to_dict()
+        log.info("POST /mlops/retrain triggered by %s", operator)
+        result = pipeline.run(trigger="api")
+        if result.success:
+            uploaded = upload_models(MODELS_DIR)
+            log.info("S3: uploaded %d artifact(s) after retrain", len(uploaded))
+        return result.to_dict()
+    finally:
+        MLOPS_CONTROL_LOCK.release()
 
 
 @app.post("/mlops/reload")
-def trigger_hot_reload():
+def trigger_hot_reload(
+    operator: str = Depends(require_mlops_operator),
+    canary_fraction: float = Query(1.0, ge=0.0, le=1.0,
+        description="Fraction of /predict traffic routed to the new model. "
+                    "0.0=abort canary, (0,1)=partial canary, 1.0=full swap (default)."),
+):
     """
     Hot-reload models and all explainers from disk into the running process.
     Call this after POST /mlops/retrain returns success=true.
 
-    Performs an atomic swap: AppState is only updated if ALL components
-    re-initialise successfully. On failure, the current production model
-    stays live and the error is returned.
+    - canary_fraction=1.0 (default): full atomic swap, all traffic to new model.
+    - canary_fraction=0.2: load new model as canary, serve 20% of /predict calls.
+    - canary_fraction=0.0: abort active canary, revert to production.
     """
-    log.info("POST /mlops/reload triggered")
-    result = hot_reload(state, DATA_DIR, MODELS_DIR, DEVICE)
-    if not result.success:
-        raise HTTPException(500, detail=result.to_dict())
-    return result.to_dict()
+    if not MLOPS_CONTROL_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another MLOps control operation is already running")
+    try:
+        log.info("POST /mlops/reload triggered by %s  canary_fraction=%.2f", operator, canary_fraction)
+        result = hot_reload(state, DATA_DIR, MODELS_DIR, DEVICE, canary_fraction=canary_fraction)
+        if not result.success:
+            raise HTTPException(500, detail=result.to_dict())
+        return result.to_dict()
+    finally:
+        MLOPS_CONTROL_LOCK.release()
 
 
 class FeedbackRequest(BaseModel):

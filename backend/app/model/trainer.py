@@ -20,6 +20,7 @@ from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
+from backend.app.mlops.mlflow_config import configure_mlflow
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -86,8 +87,7 @@ def train_gbm(X_tr, y_tr, X_te, y_te, feature_names, args):
     log.info("Training GradientBoostingClassifier  %s", params)
     t0 = time.time()
 
-    mlflow.set_tracking_uri(str(MLRUNS_DIR))
-    mlflow.set_experiment("xai-dropout-risk")
+    configure_mlflow(alias="train")
 
     with mlflow.start_run(run_name="gbm"):
         base = GradientBoostingClassifier(**params)
@@ -128,8 +128,7 @@ def train_rf(X_tr, y_tr, X_te, y_te, feature_names, args):
     log.info("Training RandomForestClassifier  %s", params)
     t0 = time.time()
 
-    mlflow.set_tracking_uri(str(MLRUNS_DIR))
-    mlflow.set_experiment("xai-dropout-risk")
+    configure_mlflow(alias="train")
 
     with mlflow.start_run(run_name="rf"):
         base = RandomForestClassifier(**params)

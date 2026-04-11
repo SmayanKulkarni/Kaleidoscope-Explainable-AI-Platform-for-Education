@@ -1,0 +1,20 @@
+[package]
+name        = "mc_simulator"
+version     = "0.1.0"
+edition     = "2021"
+description = "Monte Carlo trajectory simulator for dropout risk projection"
+
+[lib]
+name    = "mc_simulator"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3   = { version = "0.21", features = ["extension-module"] }
+rayon  = "1.10"
+rand   = "0.8"
+ndarray = "0.15"
+
+[profile.release]
+opt-level = 3
+lto       = true
+codegen-units = 1

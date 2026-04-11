@@ -136,6 +136,23 @@
   - numpy pickle version mismatch → re-ran trainer.py.
 - **Verified:** All 15 modules import OK. Server healthy on CUDA. /predict, /explain (all 9 keys present), /history, /mlops/* return correct JSON.
 
+### [2026-04-11 19:30] Cascade — Docs Sync + Missing Artifacts
+
+- **Problem:** IMPLEMENTATION_PLAN.md had unresolved 3-way merge conflicts throughout; all task statuses were stale (Pending); API_SPEC.md documented old envelope pattern and obsolete endpoints; dl_explainer.py, mc_simulator/, backend/sdk/ were missing; Dockerfile naming mismatch; no handoff fixtures.
+- **Files Rewritten:**
+  - `files/IMPLEMENTATION_PLAN.md` — stripped all `<<<<<<`/`=======`/`>>>>>>>` markers; updated all task statuses to ✅ DONE; removed frontend phase (handled by separate team); added Phase 4 auth/events/feedback section; added Phase 5 DL explainer + Rust MC entries; added final verification checklist.
+  - `files/API_SPEC.md` — rewrote to match actual `main.py` signatures: flat request bodies (no envelope), 15 latent features added, all new endpoints documented (/events, /mlops/retrain, /mlops/reload, /auth/*, /explain/me, /feedback/{learner_id}, /simulate with SimulateRequest).
+- **Files Created:**
+  - `backend/app/explainers/dl_explainer.py` — Captum IntegratedGradients + LayerIntegratedGradients for LSTM; `explain_temporal()` returns (T×F) attribution matrix; `temporal_attention_summary()`; `cross_validate()` against DeepSHAP by rank correlation; `_LSTMScalarWrapper` for scalar output required by Captum.
+  - `mc_simulator/Cargo.toml` — pyo3 0.21 + rayon 1.10 + rand 0.8 + ndarray 0.15; cdylib crate type.
+  - `mc_simulator/pyproject.toml` — maturin ≥1.4 build backend.
+  - `mc_simulator/src/lib.rs` — `simulate_trajectories()` PyO3 function; Rayon parallel iterator over N simulations; per-simulation SmallRng seeded from `seed + sim_idx`; bounds clipping; validated delta pool shape.
+  - `backend/sdk/xai_sdk/__init__.py` — package root, exports XAIClient.
+  - `backend/sdk/xai_sdk/client.py` — XAIClient with httpx (optional, falls back to urllib); methods: predict, explain, whatif, counterfactual, simulate, history, feedback, feedback_stats, mlops_health, mlops_metrics, mlops_drift_report.
+  - `backend/sdk/pyproject.toml` — installable as `pip install -e backend/sdk`.
+  - `Dockerfile.backend` — copy of Dockerfile (resolves plan/repo naming mismatch).
+  - `data/fixtures/high_risk_learner.json`, `medium_risk_learner.json`, `low_risk_learner.json` — stable handoff payloads for frontend team.
+
 ### [2026-04-11 16:10] GitHub Copilot (GPT-5.3-Codex) - Implementation Plan Frontend Scope Removal
 - **Files Modified:** `files/IMPLEMENTATION_PLAN.md`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
 - **What was done:** Removed frontend build/setup/tasks/checklist items from the implementation plan, replaced Phase 4 with backend integration support for API-contract freeze and fixture handoff, and normalized Docker planning to backend-only services.
@@ -152,10 +169,98 @@
 
 ---
 
+### [Session — MLOps Pipeline Hardening Phases 1–4] Cascade
+
+**Scope:** All four phases of the MLOps hardening plan (`mlops_plan.md`). Phase 0 (auth + concurrency lock) was already implemented by the user.
+
+**Files Modified:**
+
+- `.github/workflows/deploy.yml`
+  - Build step now produces an immutable `SHA-timestamp` image tag instead of reusing `:latest`.
+  - `docker/build-push-action` outputs `digest` (SHA256); `full_image = ECR_REPO_URL@sha256:...` is passed to the deploy job.
+  - Deploy job pulls the pinned digest, not `:latest`; writes `deploy-history.json` with current + previous image identity for rollback.
+  - Automatic rollback: if health check fails after restart, `sed`s `XAI_IMAGE` back to `PREV_IMAGE` and restarts.
+  - Deployment summary now includes `image_digest` and `full_image` fields.
+  - Cache layer changed from `type=inline` to `type=registry,mode=max` (separate `:cache` tag, not `:latest`).
+
+- `.github/workflows/ci.yml`
+  - `pytest` now emits `--junitxml=pytest-results.xml` with `junit_suite_name=xai-backend`.
+  - Artifact name now includes `${{ github.run_id }}` to prevent overwrites.
+  - `if-no-files-found: warn` ensures upload step never blocks CI on missing XML.
+  - New `smoke` job runs on `push main` after lint-test: checks `/health`, `/predict` (valid payload → 200), `/mlops/retrain` (unauthenticated → 401/403), `/mlops/reload` (unauthenticated → 401/403), `/mlops/drift-report` (→ 200).
+
+- `backend/app/model/retrain_pipeline.py`
+  - Added imports: `hashlib`, `os`, `datetime`.
+  - New module-level constants: `MIN_TRAIN_SAMPLES=1000`, `MAX_COLD_START_FRAC=0.95`, `CLASS_BALANCE_MIN/MAX=0.05/0.95`, `STRICT_MODE` (env `RETRAIN_STRICT_MODE`).
+  - `_validate()` extended with 6 gates: (1) minimum data volume, (2) class balance, (3) cold-start fraction (warn or reject via STRICT_MODE), (4) feature schema hash consistency against previous manifest, (5+6) AUC/Brier regression.  Returns a `;`-joined rejection string or None.
+  - `_validate()` call-site in `run()` now passes `X_tr_aug`, `y_tr`, `cold_frac_pre`, `augmented_feature_names`.
+  - `_train_gbm/_train_rf` now call `configure_mlflow(experiment=...)` instead of hardcoded `mlflow.set_tracking_uri + set_experiment`.
+  - New `_save_manifest()` method writes `models/model_manifest.json` with: `model_version`, `training_timestamp` (ISO-8601 UTC), `metrics_snapshot`, `feature_schema_hash` (SHA-256 of sorted JSON feature list), `data_fingerprint` (SHA-256 of `train.pkl` raw bytes), `n_features`, `feature_names`, `strict_mode`.
+  - New module-level helpers `_feature_schema_hash()` and `_file_sha256()`.
+
+- `backend/app/model/s3_loader.py`
+  - `"model_manifest.json"` added to `_MODEL_FILES` (included in S3 sync).
+  - New `validate_manifest(models_dir)` function: compares local manifest against S3 copy on `model_version`, `feature_schema_hash`, `data_fingerprint`; returns `{valid, local_hash, remote_hash, mismatch, message}`.
+
+- `backend/app/model/trainer.py`
+  - Replaced `mlflow.set_tracking_uri(MLRUNS_DIR) + mlflow.set_experiment(...)` with `configure_mlflow(alias="train")` in both `train_gbm` and `train_rf`.
+
+- `backend/app/model/tune.py`
+  - Replaced `mlflow.set_tracking_uri + set_experiment` in `_log_to_mlflow` with `configure_mlflow(alias="tune")`.
+
+- `backend/app/model/hot_reload.py`
+  - `HotReloadResult` gains two new fields: `canary_fraction: float` and `mode: str` (`"full"` | `"canary"` | `"canary-abort"`).
+  - `hot_reload()` gains `canary_fraction: float = 1.0` parameter.
+  - `canary_fraction=0.0`: aborts any active canary, sets `state.canary_gbm_model=None`, returns `canary-abort` result.
+  - `0 < canary_fraction < 1.0`: loads new GBM only into `state.canary_gbm_model`; production model untouched.
+  - `canary_fraction=1.0`: full atomic swap (existing behaviour); clears `canary_gbm_model` after swap.
+
+- `backend/app/mlops/prediction_logger.py`
+  - Added `threading`, `time` imports.
+  - `__init__` gains `prune_every: int = 100` param; added `_insert_count`, `_prune_count`, `_prune_time_ms`, `_lock` fields.
+  - `log()` no longer calls `_prune()` synchronously; instead increments `_insert_count` and spawns a daemon thread every `prune_every` inserts.
+  - `_prune()` now logs deleted row count and elapsed time; errors are caught and logged instead of propagating.
+  - New `prune_stats()` method returns `{insert_count, prune_count, prune_avg_ms, next_prune_in}`.
+
+- `backend/app/mlops/drift_monitor.py`
+  - Added `collections`, `os` imports; `Callable` type alias `AlertHook`.
+  - New env-var constants: `CACHE_TTL_SECONDS` (`DRIFT_CACHE_TTL_SECONDS`), `DRIFT_SHARE_THRESHOLD` (`DRIFT_SHARE_THRESHOLD`), `TREND_WINDOW` (`DRIFT_TREND_WINDOW`).
+  - `DriftReport` gains `alert_fired: bool` and `trend_direction: Optional[str]` fields.
+  - `DriftMonitor.__init__` gains `alert_hook: Optional[AlertHook]` param and `_report_history: deque(maxlen=TREND_WINDOW)`.
+  - `check_drift()` now: computes trend direction before building result; fires alert hook if `drift_share >= DRIFT_SHARE_THRESHOLD`; appends to `_report_history`.
+  - New `_compute_trend()`: compares current share against rolling mean; returns `"increasing"`, `"decreasing"`, or `"stable"`.
+  - New `trend_summary()`: returns `{window, drift_shares, trend, threshold}`.
+  - Default alert hook `_slack_alert_hook()`: posts to `SLACK_DRIFT_WEBHOOK_URL` if set (no-op otherwise).
+  - New `concept_drift_proxy(recent_risk_scores, recent_followed)`: computes calibration gap between mean predicted risk and `1 - follow_rate`; flags if gap > 0.25.
+
+- `backend/app/mlops/experiment_tracker.py`
+  - Replaced hardcoded `sqlite:///mlruns/mlflow.db` URI with `TRACKING_URI` from `mlflow_config`.
+  - `__init__` now calls `configure_mlflow(experiment=experiment_name)` instead of bare `mlflow.set_*`.
+
+- `backend/app/main.py`
+  - Added `import random`, `Query` to fastapi imports.
+  - `AppState` gains `canary_gbm_model = None` and `canary_fraction: float = 0.0`.
+  - `/predict` now routes `canary_fraction` fraction of non-LSTM requests to `canary_gbm_model` (tagged as `"gbm-canary"` in `model_used`).
+  - `/mlops/reload` gains `canary_fraction: float = Query(1.0, ...)` parameter; passes it to `hot_reload()`.
+
+**Files Created:**
+
+- `backend/app/mlops/mlflow_config.py` — `configure_mlflow(experiment, alias)` sets `TRACKING_URI` (from env `MLFLOW_TRACKING_URI` or default sqlite path) and experiment; `_EXPERIMENT_MAP` maps short aliases to experiment names; exported `TRACKING_URI` constant.
+- `files/RUNBOOK.md` — Operations SOP covering: deployment rollback (image), model rollback (git LFS / MLflow registry), retrain failure triage (all rejection reasons + fixes), drift response SOP (severity levels + env-var config), canary reload workflow, CI failure debug guide, useful commands.
+
+**Key design decisions:**
+- Canary uses probabilistic routing (Python `random.random()`) — stateless, zero coordination overhead, consistent with shadow traffic patterns used in industry.
+- Manifest SHA-256 uses sorted JSON for determinism across Python versions.
+- Prune amortization (every 100 inserts) eliminates per-request DB overhead at the cost of up to 100 excess rows — acceptable for a 10k-row rolling buffer.
+- Strict mode is opt-in (`RETRAIN_STRICT_MODE=true`) to avoid breaking existing CI pipelines.
+
+---
+
 ### [2026-04-11 16:45] Cascade — Phase 4: Implicit Feedback Integration + Two-Stage Model
 
 - **Files Created (6 modules):**
-  - ackend/app/tracker/event_store.py — SQLAlchemy model for interaction_events; ecord_batch, get_learner_events, get_all_learner_ids, count API.
+  - ackend/app/tracker/event_store.py — SQLAlchemy model for interaction_events; 
+ecord_batch, get_learner_events, get_all_learner_ids, count API.
   - ackend/app/tracker/event_schemas.py — Pydantic EventPayload (Literal event_type enum), EventBatchRequest (min_length=1, max_length=500), EventBatchResponse.
   - ackend/app/model/implicit_aggregator.py — ImplicitAggregator computes 15 implicit + 5 explicit = 20 engagement signals per learner from raw events + feedback; 	o_matrix() for batch encoding.
   - ackend/app/model/engagement_model.py — Denoising autoencoder (PyTorch): 20→64→32→3→32→64→20; it(), encode(), encode_learner(), save()/load(); cold-start rows (all-zero) → zero latent.
@@ -164,7 +269,8 @@
 - **Files Modified:**
   - ackend/app/causal/causal_annotator.py — LATENT_PREFIX = "engagement_latent_"; estimate_single_effect short-circuits for latent features (returns is_causal=False, pointbiserial correlation); nnotate_shap labels them "correlational".
   - ackend/app/explainers/dice_explainer.py — IMMUTABLE_FEATURES extended with engagement_latent_1/2/3.
-  - ackend/app/prescriptor/action_ranker.py — _non_actionable list includes all 3 latent features; ank() skips them.
+  - ackend/app/prescriptor/action_ranker.py — _non_actionable list includes all 3 latent features; 
+ank() skips them.
   - ackend/app/main.py — LearnerFeatures adds 3 optional latent fields (default=0.0); AppState adds event_store; lifespan initialises EventStore; new endpoints: POST /events, GET /events/{learner_id}, POST /mlops/retrain, POST /mlops/reload.
   - data/fixtures/high_risk.json, medium_risk.json, low_risk.json — all include latent features at 0.0.
 - **Tests:** None in this session (tests added in next session).
@@ -194,26 +300,32 @@
 - **Files Created:**
   - ackend/app/model/s3_loader.py — download_models(models_dir): downloads 7 top-level files + engagement/ dir from S3 at startup; skips existing files. upload_models(models_dir): uploads after retrain. model_version_on_s3(). All no-ops when AWS_S3_BUCKET unset. Lazy boto3 import.
 - **Files Modified:**
-  - ackend/app/main.py — download_models(MODELS_DIR) called at top of lifespan() before model load. upload_models(MODELS_DIR) called in /mlops/retrain on esult.success.
+  - ackend/app/main.py — download_models(MODELS_DIR) called at top of lifespan() before model load. upload_models(MODELS_DIR) called in /mlops/retrain on 
+esult.success.
 
 #### 5D — Terraform Infrastructure as Code
 - **Files Created (infra/):**
   - main.tf — AWS provider ~5.x, S3 remote state backend (xai-rec-tf-state bucket + DynamoDB lock).
   - ariables.tf — All vars: region, project_name, ec2 instance type/AMI, SSH key path, allowed SSH CIDR, RDS class/name/user/password/storage, S3 suffix.
-  - pc.tf — Uses default VPC; SG pi (80/443/8000/22 inbound); SG ds (5432 from api SG only).
+  - pc.tf — Uses default VPC; SG pi (80/443/8000/22 inbound); SG 
+ds (5432 from api SG only).
   - ecr.tf — ECR repo (mutable tags, scan on push) + lifecycle policy (keep 5 images).
   - s3.tf — Versioned, encrypted, private S3 bucket; lifecycle: expire noncurrent versions after 30 days.
   - ec2.tf — t3.micro + 20GB gp3 root; IAM role with ECR pull + S3 r/w policy; instance profile; user_data from template; create_before_destroy lifecycle.
-  - ds.tf — postgres 16.3, db.t3.micro, gp2, encrypted, single-AZ, 7-day backup, Performance Insights (7d free).
-  - outputs.tf — ec2_public_ip, ec2_public_dns, ecr_repo_url, ds_endpoint, database_url (sensitive), s3_bucket_name, pi_url.
+  - 
+ds.tf — postgres 16.3, db.t3.micro, gp2, encrypted, single-AZ, 7-day backup, Performance Insights (7d free).
+  - outputs.tf — ec2_public_ip, ec2_public_dns, ecr_repo_url, 
+ds_endpoint, database_url (sensitive), s3_bucket_name, pi_url.
   - userdata.sh.tpl — Amazon Linux 2023: installs Docker + AWS CLI; writes /opt/xai/.env; creates xai-api.service systemd unit (ECR login → pull → docker run).
   - 	erraform.tfvars.example — Filled template with all variables documented.
 
 #### 5E — GitHub Actions CI/CD
 - **Files Created (.github/workflows/):**
-  - ci.yml — Runs on push/PR. Postgres service container. Installs equirements.txt + ruff + pytest. Lint (ruff) → pytest. Uploads XML results artifact.
+  - ci.yml — Runs on push/PR. Postgres service container. Installs 
+equirements.txt + ruff + pytest. Lint (ruff) → pytest. Uploads XML results artifact.
   - deploy.yml — Runs on push to main. Steps: checkout → AWS creds → ECR login → build+push (with layer cache) → SSH: write env file → pull image → **docker run alembic upgrade head** → systemctl restart xai-api → 12×10s health check loop.
-  - etrain.yml — Manual (workflow_dispatch with min_events + orce_reload inputs) + weekly schedule (Sunday 02:00 UTC). Calls /mlops/retrain → parses success field → if true: /mlops/reload → health check. Posts full summary to GitHub step summary.
+  - 
+etrain.yml — Manual (workflow_dispatch with min_events + orce_reload inputs) + weekly schedule (Sunday 02:00 UTC). Calls /mlops/retrain → parses success field → if true: /mlops/reload → health check. Posts full summary to GitHub step summary.
   - 	erraform.yml — Runs on infra/** changes. Plan on PR (posts diff as comment via ctions/github-script). Apply on push to main. Captures outputs (hides database_url). Needs DB_PASSWORD secret.
 
 #### 5F — Database Migrations (Alembic)
@@ -237,7 +349,8 @@
 
 #### 5H — Docs & Config
 - **Files Modified:**
-  - equirements.txt — Added psycopg2-binary>=2.9.9, oto3>=1.34.0, lembic>=1.13.0.
+  - 
+equirements.txt — Added psycopg2-binary>=2.9.9, oto3>=1.34.0, lembic>=1.13.0.
   - .gitignore — Added Terraform state patterns (infra/.terraform/, *.tfstate, 	erraform.tfvars, etc.).
   - README.md — Full rewrite: quick start, docker-compose, local dev, AWS deployment steps, Terraform bootstrap, GitHub Secrets table (11 secrets), migration instructions, CI/CD table, architecture diagram, env vars reference.
 - **Files Created:**
@@ -278,4 +391,18 @@ _simulations (default 1000, max 10_000).
 - 	ests/test_prediction_logger.py (8 tests) — log, count, get_recent fields/ordering, get_feature_matrix, prune on max_rows, default constructor via db_config.
 
 - **Total test count: 47/47 passing.**
+
+### [2026-04-11 18:50] GitHub Copilot (GPT-5.3-Codex) - Stress Test Validation Fix and Full Re-run
+- **Files Modified:** `backend/app/tracker/event_schemas.py`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Added event-type alias normalization in the `/events` request schema so API accepts both frontend aliases and canonical event names (`whatif_interaction`→`whatif_slider`, `action_view`→`action_viewed`, `action_dismiss`→`action_dismissed`, `focus_start`→`session_start`, `focus_end`→`session_end`). Re-ran full stress suite in conda env `astro`.
+- **Why it was done:** Stress suite had one failing edge-case test due to 422 validation mismatch for alias event types.
+- **Human-in-the-loop:** Applied direct user request to fix failure and run complete stress test again.
+- **Dependencies/Impacts:** `/events` endpoint is now more tolerant of client event naming variance while preserving canonical stored values for downstream implicit aggregation features.
+
+### [2026-04-11 19:30] GitHub Copilot (GPT-5.3-Codex) - Phase 0 MLOps Control-Plane Hardening (Start)
+- **Files Modified:** `backend/app/main.py`, `.github/workflows/retrain.yml`, `tests/test_api_integration.py`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Added `require_mlops_operator` guard to protect `/mlops/retrain` and `/mlops/reload` with either admin JWT or `X-MLOPS-Token` automation header (`MLOPS_AUTOMATION_TOKEN` env). Added process-level lock (`MLOPS_CONTROL_LOCK`) to serialize retrain/reload operations and return `409` on concurrent control calls. Updated retrain workflow to send automation token header. Updated MLOps integration tests to authenticate as admin before control endpoint calls.
+- **Why it was done:** To begin implementation of the MLOps hardening plan by closing the highest-risk production gap (unauthenticated control endpoints) and reducing race-condition risk during live reload/retrain.
+- **Human-in-the-loop:** Directly executed user instruction to start implementation from the proposed MLOps plan.
+- **Dependencies/Impacts:** GitHub Actions now requires `MLOPS_AUTOMATION_TOKEN` secret. Control-plane endpoints reject unauthenticated/non-admin calls unless automation token is configured and provided.
 

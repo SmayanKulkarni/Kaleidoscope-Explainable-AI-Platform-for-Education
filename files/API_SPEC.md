@@ -1,7 +1,9 @@
-# API Specification — XAI Learning System
+# API Specification — XAI Learning Recommendation System
 
-> All endpoints follow the envelope pattern: `{status, data, meta}`
-> Base URL: `http://localhost:8000` (dev) | `https://your-deployment.com` (prod)
+> Base URL: `http://localhost:8000` (dev)
+>
+> All responses return raw JSON objects (no envelope wrapper).
+> Errors: FastAPI default `{detail: "..."}` for 4xx/5xx.
 
 ---
 
@@ -12,341 +14,310 @@
 Response 200:
 {
   "status": "ok",
-  "model_version": "gbm-v1.0",
-  "model_accuracy": 0.91,
-  "timestamp": "2025-04-11T10:00:00Z"
+  "model_version": "gbm-v1",
+  "gbm_loaded": true,
+  "lstm_loaded": true,
+  "device": "cuda",
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4070 SUPER",
+    "cuda_version": "12.6",
+    "vram_total_mb": 12562,
+    "vram_free_mb": 12562
+  },
+  "timestamp": "2026-04-11T10:00:00+00:00"
 }
 ```
 
 ---
 
-## Core Prediction + Explanation
+## Core Prediction
 
 ### `POST /predict`
-**Purpose:** Predict dropout risk for a learner  
-**Used by:** Dashboard on load, any feature change
+**Query param:** `model=gbm` (default) | `model=lstm`
 
 ```json
 Request:
 {
-  "learner_id": "learner_042",
-  "features": {
-    "login_frequency_weekly": 2.0,
-    "avg_session_duration_min": 18.0,
-    "forum_posts_count": 1,
-    "video_completion_rate": 0.45,
-    "quiz_avg_score": 52.0,
-    "quiz_completion_rate": 0.35,
-    "assignment_submission_rate": 0.4,
-    "days_since_last_activity": 9,
-    "prior_course_completions": 1,
-    "current_week_in_course": 5,
-    "missed_deadlines_count": 3,
-    "help_requests_count": 0
-  }
+  "login_frequency_weekly": 3.0,
+  "avg_session_duration_min": 45.0,
+  "forum_posts_count": 2,
+  "video_completion_rate": 0.6,
+  "quiz_avg_score": 55.0,
+  "quiz_completion_rate": 0.7,
+  "assignment_submission_rate": 0.65,
+  "days_since_last_activity": 7,
+  "prior_course_completions": 1,
+  "current_week_in_course": 6,
+  "missed_deadlines_count": 2,
+  "help_requests_count": 1,
+  "engagement_latent_1": 0.0,
+  "engagement_latent_2": 0.0,
+  "engagement_latent_3": 0.0
 }
 
 Response 200:
 {
-  "status": "ok",
-  "data": {
-    "learner_id": "learner_042",
-    "risk_label": "HIGH",
-    "risk_score": 0.78,
-    "recommended_topic": "Module 5: Algebra Fundamentals",
-    "model_confidence": 0.82,
-    "uncertainty": 0.14,
-    "uncertainty_label": "Medium",
-    "timestamp": "2025-04-11T10:00:00Z"
+  "risk_score": 0.5017,
+  "risk_label": "medium",
+  "model_used": "gbm",
+  "uncertainty": {
+    "prediction": 1,
+    "risk_score": 0.5017,
+    "prediction_set": [0],
+    "confidence_width": 0.5,
+    "uncertainty_label": "Low"
   }
 }
 ```
 
+**risk_label:** `"low"` (< 0.4) | `"medium"` (0.4–0.7) | `"high"` (≥ 0.7)
+
 ---
+
+## Full Explanation
 
 ### `POST /explain`
-**Purpose:** Full multi-layer explanation for a prediction  
-**Used by:** Explanation card, learner/instructor views
 
 ```json
 Request:
 {
+  "features": { /* same as /predict body */ },
   "learner_id": "learner_042",
-  "features": { /* same as /predict */ },
-  "audience": "learner"  // "learner" | "instructor" | "both"
+  "model": "gbm",
+  "audience": "both"
 }
+```
 
+**audience:** `"learner"` | `"instructor"` | `"both"` (default)
+
+```json
 Response 200:
 {
-  "status": "ok",
-  "data": {
-    "prediction": { /* same as /predict response data */ },
-
-    "feature_level": {
-      "shap_values": {
-        "assignment_submission_rate": -0.31,
-        "days_since_last_activity": 0.22,
-        "quiz_completion_rate": -0.18,
-        "quiz_avg_score": -0.12,
-        "login_frequency_weekly": -0.09,
-        "missed_deadlines_count": 0.08,
-        "forum_posts_count": -0.04,
-        "video_completion_rate": -0.03,
-        "help_requests_count": -0.01,
-        "avg_session_duration_min": -0.01,
-        "prior_course_completions": 0.0,
-        "current_week_in_course": 0.0
-      },
-      "base_value": 0.28,
-      "top3_features": [
-        "assignment_submission_rate",
-        "days_since_last_activity",
-        "quiz_completion_rate"
-      ]
-    },
-
-    "concept_level": {
-      "concept_scores": {
-        "engagement": 0.31,
-        "assessment_performance": 0.55,
-        "consistency": 0.42
-      },
-      "prototype_match": {
-        "prototypes": [
-          {
-            "learner_id": "learner_218",
-            "outcome": "dropped_out",
-            "similarity_score": 0.89,
-            "distinguishing_features": ["assignment_submission_rate", "days_since_last_activity"]
-          },
-          {
-            "learner_id": "learner_455",
-            "outcome": "completed",
-            "similarity_score": 0.76,
-            "distinguishing_features": ["quiz_completion_rate", "login_frequency_weekly"]
-          }
-        ],
-        "narrative": "Your profile is similar to learner 455 who completed this course after improving quiz completion."
-      },
-      "top_interaction": {
-        "feature_a": "quiz_completion_rate",
-        "feature_b": "days_since_last_activity",
-        "interaction_score": 0.14,
-        "direction": "amplifying",
-        "narrative": "Low quiz completion combined with inactivity amplifies dropout risk beyond either factor alone."
-      }
-    },
-
-    "prediction_level": {
-      "global_feature_importance": {
-        "assignment_submission_rate": 0.28,
-        "quiz_completion_rate": 0.22,
-        "days_since_last_activity": 0.18
-      },
-      "anchor_rule": "IF assignment_submission_rate <= 0.4 AND days_since_last_activity > 7 THEN dropout_risk = HIGH",
-      "anchor_precision": 0.93,
-      "anchor_coverage": 0.21
-    },
-
-    "diagnosis": {
-      "pertinent_positives": {
-        "assignment_submission_rate": 0.4,
-        "days_since_last_activity": 9
-      },
-      "pertinent_negatives": {
-        "login_frequency_weekly": 4.0,
-        "quiz_completion_rate": 0.65
-      },
-      "pp_narrative": "Your dropout risk is primarily driven by assignment submission rate and inactivity.",
-      "pn_narrative": "Logging in 4x/week and completing 65% of quizzes would reduce your risk significantly."
-    },
-
-    "trust": {
-      "trust_score": 0.81,
-      "fidelity": 0.94,
-      "stability": 0.78,
-      "completeness": 0.71,
-      "label": "High"
-    },
-
-    "causal_annotations": {
-      "assignment_submission_rate": { "type": "causal", "note": "Directly influences dropout risk" },
-      "days_since_last_activity": { "type": "causal", "note": "Directly influences dropout risk" },
-      "quiz_avg_score": { "type": "correlational", "note": "Associated with risk but mediated by submission rate" }
-    },
-
-    "narratives": {
-      "learner": "You're doing okay, but we noticed you haven't submitted 3 assignments and haven't logged in for 9 days. Your biggest win right now: submit your pending assignments this week — our analysis suggests this could cut your risk by ~31%.",
-      "instructor": "Learner 042 is HIGH risk (score: 0.78, confidence: 0.82). Top causal factors: assignment_submission_rate (SHAP: -0.31), days_since_last_activity (SHAP: +0.22). Anchor rule holds at 93% precision. Recommend: direct outreach + assignment deadline extension."
-    },
-
-    "consistency": {
-      "drift_detected": false,
-      "jsd": 0.04,
-      "rank_shift": 0,
-      "flag": null
-    }
+  "risk_score": 0.5017,
+  "risk_label": "medium",
+  "shap_values": {
+    "login_frequency_weekly": 0.374,
+    "assignment_submission_rate": -0.291,
+    "current_week_in_course": 2.204,
+    "..."
   },
-  "meta": {
-    "explanation_id": "exp_a3f9c2",
-    "model_version": "gbm-v1.0",
-    "computation_ms": 142
-  }
-}
-```
-
----
-
-### `POST /whatif`
-**Purpose:** Real-time prediction + SHAP update as user moves sliders  
-**Used by:** What-If UI — called on every slider change (debounced 300ms)  
-**⚠️ Must call model.predict_proba() — no heuristic**
-
-```json
-Request:
-{
-  "learner_id": "learner_042",
-  "original_features": { /* baseline */ },
-  "modified_features": {
-    "login_frequency_weekly": 5.0,
-    "quiz_completion_rate": 0.70,
-    "days_since_last_activity": 2
-    // only changed features needed; unchanged will be filled from original
-  }
-}
-
-Response 200:
-{
-  "status": "ok",
-  "data": {
-    "original": {
-      "risk_score": 0.78,
-      "risk_label": "HIGH",
-      "shap_values": { /* original SHAP */ }
-    },
-    "modified": {
-      "risk_score": 0.31,
-      "risk_label": "LOW",
-      "shap_values": { /* recomputed SHAP — FastSHAP for speed */ }
-    },
-    "delta": {
-      "risk_score_change": -0.47,
-      "label_change": "HIGH → LOW",
-      "biggest_impact_feature": "quiz_completion_rate"
+  "base_value": -2.315,
+  "top_features": [
+    { "name": "current_week_in_course", "shap": 2.204, "direction": "risk" },
+    { "name": "login_frequency_weekly", "shap": 0.374, "direction": "risk" },
+    { "name": "assignment_submission_rate", "shap": -0.291, "direction": "protective" }
+  ],
+  "stability": 0.9479,
+  "interactions": [
+    {
+      "feature_a": "current_week_in_course",
+      "feature_b": "help_requests_count",
+      "interaction_score": -0.558,
+      "direction": "dampening"
     }
-  }
-}
-```
-
----
-
-### `POST /counterfactual`
-**Purpose:** Compute minimal feature changes to flip prediction  
-**Used by:** Counterfactual card, action recommendations
-
-```json
-Request:
-{
-  "learner_id": "learner_042",
-  "features": { /* current features */ },
-  "desired_outcome": "low_risk",  // "low_risk" | "medium_risk"
-  "n_counterfactuals": 3
-}
-
-Response 200:
-{
-  "status": "ok",
-  "data": {
-    "original_risk_score": 0.78,
-    "counterfactual_risk_score": 0.22,
-    "flip_achieved": true,
-
-    "changed_features": {
-      "assignment_submission_rate": { "from": 0.4, "to": 0.75 },
-      "days_since_last_activity": { "from": 9, "to": 2 },
-      "quiz_completion_rate": { "from": 0.35, "to": 0.60 }
-    },
-
-    "actions": [
+  ],
+  "interaction_narrative": {
+    "interaction_summary": "...",
+    "top_interaction": "...",
+    "n_interactions": 5
+  },
+  "anchor_rule": {
+    "anchor_rule": "IF current_week_in_course > 4 AND assignment_submission_rate <= 0.7 THEN dropout_risk = HIGH",
+    "precision": 0.91,
+    "coverage": 0.18,
+    "human_readable": "..."
+  },
+  "prototypes": {
+    "matches": [
       {
-        "rank": 1,
-        "feature": "assignment_submission_rate",
-        "current_value": 0.4,
-        "target_value": 0.75,
-        "plain_language": "Submit 75% of assignments (currently submitting 40%)",
-        "estimated_impact": 0.34,
-        "is_causal": true,
-        "causal_badge": "🔗 Causal"
-      },
-      {
-        "rank": 2,
-        "feature": "days_since_last_activity",
-        "current_value": 9,
-        "target_value": 2,
-        "plain_language": "Return to the platform within 2 days",
-        "estimated_impact": 0.19,
-        "is_causal": true,
-        "causal_badge": "🔗 Causal"
-      },
-      {
-        "rank": 3,
-        "feature": "quiz_completion_rate",
-        "current_value": 0.35,
-        "target_value": 0.60,
-        "plain_language": "Complete 60% of quizzes (currently at 35%)",
-        "estimated_impact": 0.14,
-        "is_causal": false,
-        "causal_badge": "〰️ Correlated"
+        "learner_id": "learner_218",
+        "outcome": "dropped_out",
+        "similarity_score": 0.89,
+        "distinguishing_features": ["assignment_submission_rate", "days_since_last_activity"]
       }
     ],
-
-    "human_readable_summary": "If you submit more assignments and log back in within 2 days, your dropout risk drops from HIGH to LOW."
+    "narrative": "Your profile closely resembles learner_218 who dropped out..."
+  },
+  "counterfactual": {
+    "actions": [...],
+    "counterfactuals": [...],
+    "best_cf": { "...": "..." },
+    "changed_features": { "assignment_submission_rate": {"from": 0.65, "to": 0.85} },
+    "n_generated": 3
+  },
+  "ranked_actions": [
+    {
+      "rank": 1,
+      "feature": "assignment_submission_rate",
+      "current_value": 0.65,
+      "target_value": 0.85,
+      "plain_language": "Submit 85% of assignments (currently at 65%)",
+      "priority_score": 0.72,
+      "estimated_impact": 0.18,
+      "is_causal": true,
+      "causal_badge": "Causal"
+    }
+  ],
+  "causal_annotations": [
+    {
+      "feature": "assignment_submission_rate",
+      "shap_value": -0.291,
+      "shap_direction": "protective",
+      "causal_type": "causal",
+      "ate": -0.14,
+      "is_causal": true,
+      "note": "DoWhy confirms causal effect (ATE=-0.1400). SHAP and causal direction agree."
+    }
+  ],
+  "trust_score": {
+    "trust_score": 0.81,
+    "fidelity": 0.94,
+    "stability": 0.9479,
+    "completeness": 0.71,
+    "label": "High"
+  },
+  "uncertainty": {
+    "prediction": 1,
+    "risk_score": 0.5017,
+    "prediction_set": [0],
+    "confidence_width": 0.5,
+    "uncertainty_label": "Low"
+  },
+  "explanation_drift": {
+    "drift_detected": false,
+    "jsd": 0.04,
+    "rank_shift": 0,
+    "severity": "none",
+    "flag": null
+  },
+  "narratives": {
+    "learner": "You're on track but falling behind on assignments...",
+    "instructor": "Learner 042 is MEDIUM risk (0.50). Top factor: current_week_in_course..."
   }
+}
+```
+
+> **LSTM temporal attributions** (only returned when `model=lstm`):
+> `temporal_attributions`: `{week_importances, feature_importances, most_important_week}`
+
+---
+
+## What-If Scenario
+
+### `POST /whatif`
+```json
+Request:
+{
+  "features": { /* LearnerFeatures */ },
+  "overrides": { "quiz_avg_score": 80.0, "days_since_last_activity": 2 }
+}
+
+Response 200:
+{
+  "shap_values": { "...": 0.0 },
+  "base_value": -2.315,
+  "risk_score": 0.31,
+  "risk_delta": -0.19,
+  "top_features": [...]
 }
 ```
 
 ---
 
-### `GET /history/{learner_id}`
-**Purpose:** Explanation consistency timeline  
-**Used by:** Consistency timeline chart
+## Counterfactual
 
+### `POST /counterfactual`
+```json
+Request: { /* LearnerFeatures flat object */ }
+
+Response 200:
+{
+  "actions": [...],
+  "counterfactuals": [...],
+  "best_cf": { "...": "..." },
+  "changed_features": { "assignment_submission_rate": {"from": 0.65, "to": 0.85} },
+  "n_generated": 3,
+  "ranked_actions": [
+    {
+      "rank": 1,
+      "feature": "assignment_submission_rate",
+      "current_value": 0.65,
+      "target_value": 0.85,
+      "plain_language": "Submit 85% of assignments (currently at 65%)",
+      "priority_score": 0.72,
+      "estimated_impact": 0.18,
+      "is_causal": true,
+      "causal_badge": "Causal"
+    }
+  ]
+}
+```
+
+---
+
+## Monte Carlo Simulation
+
+### `POST /simulate`
+```json
+Request:
+{
+  "features": { /* LearnerFeatures */ },
+  "current_week": 6,
+  "target_week": 12,
+  "n_simulations": 1000
+}
+
+Response 200 (transitions.pkl available):
+{
+  "outcome_distribution": { "mean_risk": 0.62, "std_risk": 0.09, "p_dropout": 0.71 },
+  "feature_distributions": { "assignment_submission_rate": {"mean": 0.61, "std": 0.07} },
+  "risk_percentiles": { "p10": 0.45, "p50": 0.63, "p90": 0.78 },
+  "current_week": 6,
+  "target_week": 12,
+  "n_simulations": 1000
+}
+
+Response 200 (transitions.pkl missing):
+{
+  "feature_distributions": {},
+  "outcome_distribution": {},
+  "current_week": 6,
+  "target_week": 12,
+  "n_simulations": 1000,
+  "message": "transitions.pkl not found — run temporal_builder.py first"
+}
+```
+
+---
+
+## History
+
+### `GET /history/{learner_id}`
 ```json
 Response 200:
 {
-  "status": "ok",
-  "data": {
-    "learner_id": "learner_042",
-    "sessions": [
-      {
-        "session_id": "exp_a1b2c3",
-        "timestamp": "2025-04-07T09:00:00Z",
-        "risk_score": 0.65,
-        "risk_label": "MEDIUM",
-        "top3_features": ["quiz_completion_rate", "assignment_submission_rate", "login_frequency_weekly"],
-        "trust_score": 0.84,
-        "drift_from_previous": false
-      },
-      {
-        "session_id": "exp_a3f9c2",
-        "timestamp": "2025-04-11T10:00:00Z",
-        "risk_score": 0.78,
-        "risk_label": "HIGH",
-        "top3_features": ["assignment_submission_rate", "days_since_last_activity", "quiz_completion_rate"],
-        "trust_score": 0.81,
-        "drift_from_previous": true,
-        "drift_flag": "⚠️ Top feature changed: quiz_completion_rate → days_since_last_activity"
-      }
-    ]
-  }
+  "learner_id": "learner_042",
+  "timeline": [
+    {
+      "timestamp": "2026-04-11T10:19:53",
+      "risk_score": 0.50,
+      "top3_features": [
+        { "name": "current_week_in_course", "shap": 2.204, "direction": "risk" },
+        { "name": "login_frequency_weekly", "shap": 0.374, "direction": "risk" },
+        { "name": "assignment_submission_rate", "shap": -0.291, "direction": "protective" }
+      ]
+    }
+  ],
+  "history": [ { "timestamp": "...", "risk_score": 0.50, "model_used": "gbm" } ],
+  "drift_flags": []
 }
 ```
 
 ---
 
-### `POST /feedback`
-**Purpose:** Human-in-the-loop feedback collection
+## Feedback
 
+### `POST /feedback`
 ```json
 Request:
 {
@@ -354,33 +325,168 @@ Request:
   "explanation_id": "exp_a3f9c2",
   "rating": 4,
   "followed_recommendation": true,
-  "correction": {
-    "feature": "days_since_last_activity",
-    "comment": "I was on a planned break, this shouldn't count as inactivity"
-  }
+  "top_action_feature": "assignment_submission_rate",
+  "correction_feature": "days_since_last_activity",
+  "correction_comment": "I was on a planned break",
+  "audience": "learner"
 }
 
 Response 200:
-{ "status": "ok", "data": { "feedback_id": "fb_x9q1" } }
+{ "recorded": true, "feedback_id": "fb_x9q1", "learner_id": "learner_042" }
 ```
-
----
 
 ### `GET /feedback/stats`
 ```json
 Response 200:
 {
-  "status": "ok",
-  "data": {
-    "total_explanations": 142,
-    "avg_rating": 3.8,
-    "recommendation_follow_rate": 0.61,
-    "top_corrected_features": ["days_since_last_activity", "help_requests_count"],
-    "high_trust_follow_rate": 0.74,
-    "low_trust_follow_rate": 0.38
-  }
+  "total_records": 142,
+  "avg_rating": 3.8,
+  "recommendation_follow_rate": 0.61,
+  "top_corrected_features": ["days_since_last_activity", "help_requests_count"],
+  "high_trust_follow_rate": 0.74,
+  "low_trust_follow_rate": 0.38
 }
 ```
+
+### `GET /feedback/{learner_id}`
+```json
+Response 200:
+{
+  "learner_id": "learner_042",
+  "records": [{ "timestamp": "...", "rating": 4, "followed_recommendation": true }]
+}
+```
+
+---
+
+## Interaction Events (Implicit Feedback)
+
+### `POST /events`
+```json
+Request:
+{
+  "events": [
+    {
+      "learner_id": "learner_042",
+      "event_type": "whatif_slider",
+      "feature": "quiz_avg_score",
+      "value": 75.0,
+      "timestamp": "2026-04-11T10:00:00Z"
+    }
+  ]
+}
+
+Response 200:
+{ "recorded": 1, "message": "ok" }
+```
+
+### `GET /events/{learner_id}`
+```json
+Response 200:
+{
+  "learner_id": "learner_042",
+  "count": 12,
+  "events": [{ "event_type": "whatif_slider", "feature": "quiz_avg_score", "value": 75.0 }]
+}
+```
+
+---
+
+## MLOps
+
+### `GET /mlops/health`
+```json
+Response 200:
+{
+  "status": "ok",
+  "model_version": "gbm-v1",
+  "drift_status": "ok",
+  "prediction_count": 1247,
+  "timestamp": "2026-04-11T10:00:00+00:00"
+}
+```
+
+### `GET /mlops/metrics`
+```json
+Response 200:
+{
+  "training": {
+    "gbm": {
+      "test_auc_roc": 0.9427, "test_f1": 0.8035, "test_brier_score": 0.0873
+    },
+    "rf": {
+      "test_auc_roc": 0.9425, "test_f1": 0.7851, "test_brier_score": 0.0902
+    }
+  },
+  "model_version": "gbm-v1"
+}
+```
+
+### `GET /mlops/drift-report`
+```json
+Response 200 (report available):
+{
+  "dataset_drift": false,
+  "n_drifted_features": 1,
+  "n_total_features": 12,
+  "drift_share": 0.083,
+  "feature_drifts": [
+    { "feature": "days_since_last_activity", "drift_detected": true, "drift_score": 0.21 }
+  ]
+}
+
+Response 200 (not enough data):
+{
+  "dataset_drift": false,
+  "n_drifted_features": 0,
+  "message": "Not enough predictions logged yet"
+}
+```
+
+### `POST /mlops/retrain`
+Triggers full retraining pipeline from accumulated events + feedback.
+```json
+Response 200:
+{ "success": true, "message": "Retrain complete", "new_version": "gbm-v2" }
+```
+
+### `POST /mlops/reload`
+Hot-swap live model (call after retrain succeeds).
+```json
+Response 200:
+{ "success": true, "reloaded_components": ["gbm", "shap", "anchors", "dice", "uncertainty"] }
+
+Response 500 (reload failed):
+{ "detail": { "success": false, "error": "SHAP explainer init failed: ..." } }
+```
+
+---
+
+## Auth
+
+### `POST /auth/register`
+```json
+Request: { "username": "learner_042", "password": "secret", "role": "student" }
+Response 200: { "id": 1, "username": "learner_042", "role": "student" }
+```
+
+### `POST /auth/token`
+```json
+Request (form data): username=learner_042&password=secret
+Response 200: { "access_token": "eyJ...", "token_type": "bearer" }
+```
+
+---
+
+## Authenticated Student Endpoints
+
+All require `Authorization: Bearer <token>`.
+
+### `POST /explain/me`
+Returns latest explanation summary from the learner's own profile.
+
+### `GET /explain/me/history`
+Returns explanation timeline for the authenticated learner.
 
 ---
 
@@ -389,95 +495,21 @@ Response 200:
 ```json
 // 422 Validation Error
 {
-  "status": "error",
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "quiz_completion_rate must be between 0.0 and 1.0",
-    "field": "quiz_completion_rate"
-  }
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": ["body", "quiz_completion_rate"],
+      "msg": "Input should be less than or equal to 1"
+    }
+  ]
 }
 
 // 503 Model Not Loaded
-{
-  "status": "error",
-  "error": {
-    "code": "MODEL_NOT_READY",
-    "message": "Model is loading, retry in 5 seconds"
-  }
-}
-```
+{ "detail": "Model not loaded — run trainer.py first" }
 
----
+// 503 Module Not Initialised
+{ "detail": "DiCE explainer not initialised" }
 
-## FastAPI Implementation Skeleton
-
-```python
-from fastapi import FastAPI, HTTPException
-from contextlib import asynccontextmanager
-import asyncio
-
-# Global state loaded once at startup
-MODEL_STATE = {}
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Load everything at startup
-    MODEL_STATE["gbm"] = load_model("models/gbm.pkl")
-    MODEL_STATE["rf"] = load_model("models/rf.pkl")
-    MODEL_STATE["X_train"] = load_data("data/train.pkl")
-    MODEL_STATE["shap"] = SHAPExplainer(MODEL_STATE["gbm"], MODEL_STATE["X_train"])
-    MODEL_STATE["fastshap"] = FastSHAPExplainer(MODEL_STATE["gbm"], MODEL_STATE["X_train"])
-    MODEL_STATE["dice"] = DiCEExplainer(MODEL_STATE["gbm"], MODEL_STATE["X_train"])
-    MODEL_STATE["anchors"] = AnchorsExplainer(MODEL_STATE["gbm"], MODEL_STATE["X_train"])
-    MODEL_STATE["cem"] = CEMExplainer(MODEL_STATE["keras_surrogate"], MODEL_STATE["X_train"])
-    MODEL_STATE["proto"] = PrototypeExplainer(MODEL_STATE["X_train"], ...)
-    MODEL_STATE["arch"] = ArchipelagoExplainer(MODEL_STATE["shap"].explainer)
-    MODEL_STATE["store"] = ExplanationStore("sqlite:///explanations.db")
-    MODEL_STATE["drift"] = ExplanationDriftDetector()
-    MODEL_STATE["trust"] = TrustScorer()
-    MODEL_STATE["narrator"] = LLMNarrator()
-    yield
-    # Cleanup on shutdown
-
-app = FastAPI(lifespan=lifespan)
-
-@app.post("/explain")
-async def explain(request: ExplainRequest):
-    features = request.features.dict()
-    X = np.array([list(features.values())])
-
-    # Run SHAP + Anchors + Prototypes in parallel
-    shap_task = asyncio.to_thread(MODEL_STATE["shap"].explain, features, MODEL_STATE["gbm"])
-    anchors_task = asyncio.to_thread(MODEL_STATE["anchors"].explain, features)
-    proto_task = asyncio.to_thread(MODEL_STATE["proto"].explain, features)
-    arch_task = asyncio.to_thread(MODEL_STATE["arch"].get_interactions, features)
-
-    shap_result, anchors_result, proto_result, arch_result = await asyncio.gather(
-        shap_task, anchors_task, proto_task, arch_task
-    )
-
-    stability = MODEL_STATE["shap"].stability_score(features)
-    trust = MODEL_STATE["trust"].score(shap_result["shap_values"], MODEL_STATE["gbm"], features, stability)
-    causal = MODEL_STATE["causal"].annotate_shap(shap_result["shap_values"])
-
-    # CEM runs synchronously (slower)
-    cem_result = MODEL_STATE["cem"].explain(features)
-
-    # LLM narrates ONLY pre-computed data
-    learner_narrative = await MODEL_STATE["narrator"].narrate_for_learner(
-        shap_result, anchors_result, proto_result, trust
-    )
-
-    explanation = build_explanation_result(
-        shap_result, anchors_result, proto_result,
-        arch_result, cem_result, trust, causal, learner_narrative
-    )
-
-    # Store for consistency tracking
-    drift = MODEL_STATE["drift"].check_learner_drift(
-        request.learner_id, MODEL_STATE["store"]
-    )
-    MODEL_STATE["store"].save(request.learner_id, explanation)
-
-    return {"status": "ok", "data": {**explanation, "consistency": drift}}
+// 404 Not Found
+{ "detail": "No explanation found for learner_999" }
 ```
