@@ -1,0 +1,34 @@
+{
+  "gbm": {
+    "train_auc_roc": 0.9514,
+    "train_avg_precision": 0.8688,
+    "train_f1": 0.8192,
+    "train_brier_score": 0.0817,
+    "test_auc_roc": 0.9427,
+    "test_avg_precision": 0.8439,
+    "test_f1": 0.8035,
+    "test_brier_score": 0.0873,
+    "training_time_sec": 22.6
+  },
+  "rf": {
+    "test_auc_roc": 0.9425,
+    "test_avg_precision": 0.8442,
+    "test_f1": 0.7851,
+    "test_brier_score": 0.0902,
+    "training_time_sec": 1.7
+  },
+  "feature_names": [
+    "login_frequency_weekly",
+    "avg_session_duration_min",
+    "forum_posts_count",
+    "video_completion_rate",
+    "quiz_avg_score",
+    "quiz_completion_rate",
+    "assignment_submission_rate",
+    "days_since_last_activity",
+    "prior_course_completions",
+    "current_week_in_course",
+    "missed_deadlines_count",
+    "help_requests_count"
+  ]
+}

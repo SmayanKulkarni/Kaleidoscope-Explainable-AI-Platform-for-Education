@@ -135,3 +135,17 @@
   - Evidently import chain crash (litestar/multipart) → lazy import inside check_drift().
   - numpy pickle version mismatch → re-ran trainer.py.
 - **Verified:** All 15 modules import OK. Server healthy on CUDA. /predict, /explain (all 9 keys present), /history, /mlops/* return correct JSON.
+
+### [2026-04-11 16:10] GitHub Copilot (GPT-5.3-Codex) - Implementation Plan Frontend Scope Removal
+- **Files Modified:** `files/IMPLEMENTATION_PLAN.md`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Removed frontend build/setup/tasks/checklist items from the implementation plan, replaced Phase 4 with backend integration support for API-contract freeze and fixture handoff, and normalized Docker planning to backend-only services.
+- **Why it was done:** Frontend execution has been split to a different team; this plan now reflects backend/data/ML ownership only.
+- **Human-in-the-loop:** Applied explicit user direction to de-scope frontend while preserving backend endpoints and handoff artifacts for cross-team integration.
+- **Dependencies/Impacts:** Backend milestones and acceptance criteria now exclude UI deliverables. Frontend teams should consume API fixtures/spec from `files/API_SPEC.md` and handoff payloads.
+
+### [2026-04-11 16:18] GitHub Copilot (GPT-5.3-Codex) - Model Artifact Tracking for GitHub Push
+- **Files Modified:** `.gitignore`, `models/gbm.pkl`, `models/rf.pkl`, `models/lstm.pt`, `models/lstm_config.json`, `models/training_summary.json`, `models/tuning_summary.json`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Removed `models/` from ignore rules so model artifacts can be versioned, then prepared model binaries/config summaries for commit and push.
+- **Why it was done:** User requested publishing trained model artifacts to GitHub.
+- **Human-in-the-loop:** Applied direct user instruction to include model files in repository history.
+- **Dependencies/Impacts:** Future clones can retrieve model files via Git LFS pointers for `.pt` and `.pkl`; deployment scripts can reference committed `models/` artifacts.

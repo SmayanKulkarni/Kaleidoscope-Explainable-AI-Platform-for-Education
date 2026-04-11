@@ -1,0 +1,30 @@
+{
+  "n_features": 12,
+  "n_timesteps": 6,
+  "hidden_dim": 32,
+  "n_layers": 1,
+  "dropout": 0.2927585318653319,
+  "week_order": [
+    2,
+    4,
+    6,
+    8,
+    10,
+    12
+  ],
+  "feature_names": [
+    "login_frequency_weekly",
+    "avg_session_duration_min",
+    "forum_posts_count",
+    "video_completion_rate",
+    "quiz_avg_score",
+    "quiz_completion_rate",
+    "assignment_submission_rate",
+    "days_since_last_activity",
+    "prior_course_completions",
+    "current_week_in_course",
+    "missed_deadlines_count",
+    "help_requests_count"
+  ],
+  "best_val_auc": 0.8779763707103181
+}
