@@ -37,18 +37,34 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from data_loader import (
-    FEATURE_COLUMNS,
-    GROUP_KEY,
-    ID_COLUMN,
-    TARGET_COLUMN,
-    PROJECT_ROOT,
-    DATA_DIR,
-    RAW_DIR,
-    _load_raw,
-    _synthetic_fill_help,
-    download_oulad,
-)
+try:
+    # Works when run as a script from its own directory
+    from data_loader import (
+        FEATURE_COLUMNS,
+        GROUP_KEY,
+        ID_COLUMN,
+        TARGET_COLUMN,
+        PROJECT_ROOT,
+        DATA_DIR,
+        RAW_DIR,
+        _load_raw,
+        _synthetic_fill_help,
+        download_oulad,
+    )
+except ModuleNotFoundError:
+    # Imported as a module from the FastAPI app — only MonteCarloSimulator is needed
+    from backend.app.model.data_loader import (
+        FEATURE_COLUMNS,
+        GROUP_KEY,
+        ID_COLUMN,
+        TARGET_COLUMN,
+        PROJECT_ROOT,
+        DATA_DIR,
+        RAW_DIR,
+        _load_raw,
+        _synthetic_fill_help,
+        download_oulad,
+    )
 
 logging.basicConfig(
     level=logging.INFO,

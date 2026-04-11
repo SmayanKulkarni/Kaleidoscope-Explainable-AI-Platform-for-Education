@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Terraform Variable Overrides
+# Copy to terraform.tfvars and fill in values. Never commit terraform.tfvars.
+# Usage: terraform apply   (auto-loaded from terraform.tfvars)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# AWS region (ap-south-1 = Mumbai free tier eligible)
+aws_region = "ap-south-1"
+
+# Project tag applied to all resources
+project_name = "xai-rec"
+
+# EC2 instance — t3.micro for free tier, t3.small if retraining on instance
+ec2_instance_type = "t3.micro"
+
+# Amazon Linux 2023 AMI — update if deploying to a different region
+# Find AMI: aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-*-x86_64"
+ec2_ami_id = "ami-0f58b397bc5c1f2e8"
+
+# Path to your SSH public key for EC2 access
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+
+# Restrict SSH to your IP only (recommended for production)
+# allowed_ssh_cidr = "YOUR.IP.ADDRESS/32"
+allowed_ssh_cidr = "0.0.0.0/0"
+
+# RDS PostgreSQL — db.t3.micro is free tier eligible
+db_instance_class    = "db.t3.micro"
+db_name              = "xai_db"
+db_username          = "xai"
+db_password          = "REPLACE_WITH_STRONG_PASSWORD"   # min 8 chars, no @ or /
+db_allocated_storage = 20
+
+# S3 bucket name suffix — must be globally unique across all AWS accounts
+s3_bucket_suffix = "001"

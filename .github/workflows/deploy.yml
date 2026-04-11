@@ -1,0 +1,118 @@
+name: CD — Build & Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:   # allow manual trigger
+
+# Only one deploy at a time
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    name: Build & Push Docker Image to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generate image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          echo "image_tag=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${SHORT_SHA}"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ECR_REPO_URL }}:latest
+            ${{ secrets.ECR_REPO_URL }}:${{ steps.meta.outputs.image_tag }}
+          cache-from: type=registry,ref=${{ secrets.ECR_REPO_URL }}:latest
+          cache-to:   type=inline
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment: production
+
+    steps:
+      - name: Checkout (for deploy scripts)
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key:      ${{ secrets.EC2_SSH_KEY }}
+          timeout:  300s
+          script: |
+            set -euo pipefail
+
+            # ── Write secrets to env file ──────────────────────────────────
+            sudo tee /opt/xai/.env > /dev/null <<ENV
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
+            AWS_REGION=${{ secrets.AWS_REGION }}
+            JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+            JWT_ALGORITHM=HS256
+            JWT_EXPIRE_MIN=1440
+            ENV
+            sudo chmod 600 /opt/xai/.env
+
+            # ── Pull latest image ──────────────────────────────────────────
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
+              | docker login --username AWS --password-stdin ${{ secrets.ECR_REPO_URL }}
+            docker pull ${{ secrets.ECR_REPO_URL }}:latest
+
+            # ── Run DB migrations before restarting ──────────────────────
+            docker run --rm \
+              -e DATABASE_URL=${{ secrets.DATABASE_URL }} \
+              ${{ secrets.ECR_REPO_URL }}:latest \
+              python -m alembic upgrade head
+
+            # ── Graceful rolling restart via systemd ──────────────────────
+            sudo systemctl restart xai-api
+
+            # ── Wait for health check ─────────────────────────────────────
+            for i in $(seq 1 12); do
+              sleep 10
+              if curl -sf http://localhost:8000/health > /dev/null; then
+                echo "Health check passed (attempt $i)"
+                exit 0
+              fi
+              echo "Waiting... attempt $i/12"
+            done
+            echo "ERROR: Health check failed after 2 minutes"
+            exit 1
+
+      - name: Deployment summary
+        run: |
+          echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image tag**: ${{ needs.build-push.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Host**: ${{ secrets.EC2_HOST }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **API URL**: http://${{ secrets.EC2_HOST }}:8000/docs" >> $GITHUB_STEP_SUMMARY

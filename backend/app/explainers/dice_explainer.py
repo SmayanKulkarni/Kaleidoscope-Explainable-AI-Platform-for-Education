@@ -24,10 +24,14 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-# Features the learner cannot change (structural / historical)
+# Features the learner cannot change (structural / historical / latent)
+# engagement_latent_* are compressed autoencoder outputs — not directly editable
 IMMUTABLE_FEATURES = [
     "prior_course_completions",
     "current_week_in_course",
+    "engagement_latent_1",
+    "engagement_latent_2",
+    "engagement_latent_3",
 ]
 
 # Continuous feature ranges are learned from training data.

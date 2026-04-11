@@ -101,3 +101,29 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Terraform
+# ──────────────────────────────────────────────────────────────────────────────
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/terraform.tfvars
+infra/override.tf
+infra/override.tf.json
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AI/IDE configurations
+# ──────────────────────────────────────────────────────────────────────────────
+
+.claude/
+.windsurf/
+.code-review-graph/
+.mcp.json
+.opencode.json
+.cursorrules
+.windsurfrules
+AGENTS.md
+CLAUDE.md
+GEMINI.md

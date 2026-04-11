@@ -100,6 +100,15 @@ def _build_causal_graph(feature_names: list[str]) -> str:
                 if r in feature_names:
                     edges.append((e, r))
 
+    # Latent engagement features (engagement_latent_1/2/3) are CORRELATIONAL:
+    # they are compressed representations of platform interaction signals,
+    # not direct interventions. They correlate with, but do not cause, dropout.
+    # We add them as direct → outcome edges so DoWhy treats them as observable
+    # correlates, not causes (no back-door paths from latent to confounders).
+    latent_features = [f for f in feature_names if f.startswith("engagement_latent_")]
+    for lf in latent_features:
+        edges.append((lf, outcome))
+
     # Build GML
     all_nodes = [n for n in feature_names if n in feature_names] + [outcome]
     node_lines = []
@@ -160,6 +169,8 @@ class AnnotatedFeature:
 
 class CausalAnnotator:
     CONFOUNDERS = {"prior_course_completions", "current_week_in_course"}
+    # Latent engagement features are compressed signals — correlational by design
+    LATENT_PREFIX = "engagement_latent_"
 
     def __init__(
         self,
@@ -192,6 +203,31 @@ class CausalAnnotator:
         Estimate the average treatment effect (ATE) of `feature` on dropout_risk
         using DoWhy's identification + estimation pipeline.
         """
+        # Latent engagement features are compressed platform-interaction signals.
+        # They are not directly interventiable — always label as correlational.
+        if feature.startswith(self.LATENT_PREFIX):
+            from scipy.stats import pointbiserialr
+            if feature in self.df.columns:
+                corr, p_val = pointbiserialr(self.df["dropout_risk"], self.df[feature])
+            else:
+                corr, p_val = 0.0, 1.0
+            direction = ("risk_increasing" if corr > 0.05
+                        else "risk_decreasing" if corr < -0.05
+                        else "neutral")
+            return CausalEffect(
+                feature=feature,
+                ate=float(corr),
+                p_value=float(p_val),
+                is_causal=False,
+                effect_direction=direction,
+                method_used="correlational.latent_engagement",
+                note=(
+                    "Latent engagement feature — compressed platform interaction signal. "
+                    "Correlational only; not directly interventiable. "
+                    f"r={corr:.4f}, p={p_val:.6f}"
+                ),
+            )
+
         import dowhy
 
         try:
@@ -299,6 +335,8 @@ class CausalAnnotator:
 
             if name in self.CONFOUNDERS:
                 causal_type = "confounder"
+            elif name.startswith(self.LATENT_PREFIX):
+                causal_type = "correlational"
             elif effect and effect.is_causal:
                 causal_type = "causal"
             else:
@@ -307,7 +345,13 @@ class CausalAnnotator:
             shap_dir = "risk" if shap_val > 0 else "protective"
 
             note = ""
-            if effect:
+            if name.startswith(self.LATENT_PREFIX):
+                note = (
+                    "Latent engagement score derived from platform interaction patterns "
+                    "(clicks, time-on-page, What-If usage, action follow-rate). "
+                    "Reflects your overall engagement quality — not directly editable."
+                )
+            elif effect:
                 if causal_type == "causal":
                     note = (f"DoWhy confirms causal effect (ATE={effect.ate:.4f}). "
                            f"SHAP and causal direction {'agree' if (effect.ate > 0) == (shap_val > 0) else 'disagree'}.")

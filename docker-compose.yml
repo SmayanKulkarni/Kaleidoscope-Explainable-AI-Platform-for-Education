@@ -1,0 +1,79 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# XAI Learning Recommendation System — Local Development Stack
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage:
+#   cp .env.example .env          # fill in secrets
+#   docker-compose up --build     # first run (builds image, starts Postgres)
+#   docker-compose up             # subsequent runs
+#   docker-compose down -v        # tear down including DB volume
+#
+# The API is at http://localhost:8000
+# Swagger docs at http://localhost:8000/docs
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: xai_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-xai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xai_secret}
+      POSTGRES_DB:       ${POSTGRES_DB:-xai_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: xai_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-xai}:${POSTGRES_PASSWORD:-xai_secret}@db:5432/${POSTGRES_DB:-xai_db}
+      # Auth
+      JWT_SECRET_KEY:    ${JWT_SECRET_KEY}
+      JWT_ALGORITHM:     HS256
+      JWT_EXPIRE_MIN:    1440
+      # LLM Narration
+      GROQ_API_KEY:      ${GROQ_API_KEY:-}
+      # S3 (leave blank for local dev — models loaded from volume mount)
+      AWS_S3_BUCKET:     ${AWS_S3_BUCKET:-}
+      AWS_REGION:        ${AWS_REGION:-ap-south-1}
+      # MLflow
+      MLFLOW_TRACKING_URI: ./mlruns
+    volumes:
+      # Mount local models dir so you don't re-download from S3 in dev
+      - ./models:/app/models:ro
+      - ./mlruns:/app/mlruns
+      # Mount data so fixtures and explanation DBs persist across restarts
+      - xai_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  xai_data:
+    driver: local

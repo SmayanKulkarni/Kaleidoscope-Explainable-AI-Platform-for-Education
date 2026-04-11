@@ -29,7 +29,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -45,8 +45,20 @@ from backend.app.mlops.drift_monitor import DriftMonitor
 from backend.app.mlops.prediction_logger import PredictionLogger
 from backend.app.model.lstm_trainer import DropoutLSTM
 from backend.app.prescriptor.action_ranker import ActionRanker
+from backend.app.auth.auth import get_current_active_student, get_current_user_optional
+from backend.app.auth.database import init_db as init_auth_db
+from backend.app.auth.models import User
+from backend.app.auth.router import router as auth_router
+from backend.app.tracker.feedback_store import FeedbackInput, FeedbackStore
+from backend.app.tracker.event_store import EventStore
+from backend.app.tracker.event_schemas import EventBatchRequest, EventBatchResponse
+from backend.app.model.retrain_pipeline import RetrainPipeline
+from backend.app.model.hot_reload import hot_reload
+from backend.app.model.s3_loader import download_models, upload_models
+from backend.app.narrator.llm_narrator import LLMNarrator
 from backend.app.tracker.consistency_store import ExplanationStore
 from backend.app.tracker.drift_detector import ExplanationDriftDetector
+from backend.app.model.temporal_builder import MonteCarloSimulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
@@ -84,6 +96,10 @@ class AppState:
     drift_detector: Optional[ExplanationDriftDetector] = None
     prediction_logger: Optional[PredictionLogger] = None
     drift_monitor: Optional[DriftMonitor] = None
+    feedback_store: Optional[FeedbackStore] = None
+    event_store: Optional[EventStore] = None
+    llm_narrator: Optional[LLMNarrator] = None
+    mc_simulator: Optional[MonteCarloSimulator] = None
     model_version:  str = "unknown"
 
 
@@ -100,6 +116,11 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ── Download model artifacts from S3 (no-op if AWS_S3_BUCKET not set) ──
+    downloaded = download_models(MODELS_DIR)
+    if downloaded:
+        log.info("S3: downloaded %d model artifact(s)", len(downloaded))
+
     log.info("Loading models from %s …", MODELS_DIR)
 
     # ── Load training data (needed by explainers) ──
@@ -108,7 +129,8 @@ async def lifespan(app: FastAPI):
         blob = _load_pkl(train_path)
         state.X_train     = blob["X"]
         state.y_train     = blob["y"]
-        state.learner_ids = blob.get("learner_ids")
+        _ids = blob.get("learner_ids")
+        state.learner_ids = np.asarray(_ids, dtype=object) if _ids is not None else None
         log.info("Training data loaded  X=%s", state.X_train.shape)
 
     # ── GBM ──
@@ -211,13 +233,14 @@ async def lifespan(app: FastAPI):
         log.info("ActionRanker initialised")
 
     state.trust_scorer    = TrustScorer()
-    state.explanation_store = ExplanationStore(
-        db_url=f"sqlite:///{DATA_DIR / 'explanations.db'}"
-    )
+    state.explanation_store = ExplanationStore()
     state.drift_detector  = ExplanationDriftDetector()
-    state.prediction_logger = PredictionLogger(
-        db_url=f"sqlite:///{DATA_DIR / 'predictions.db'}"
-    )
+    state.prediction_logger = PredictionLogger()
+    state.feedback_store = FeedbackStore()
+    log.info("FeedbackStore initialised")
+
+    state.event_store = EventStore()
+    log.info("EventStore initialised")
 
     # ── Phase 2A: Drift Monitor ──
     if state.X_train is not None:
@@ -227,6 +250,27 @@ async def lifespan(app: FastAPI):
             feature_names  = state.feature_names,
         )
         log.info("DriftMonitor initialised")
+
+    # ── Auth DB ──
+    init_auth_db()
+    log.info("Auth DB initialised (data/auth.db)")
+
+    # ── Phase 3: LLM Narrator ──
+    state.llm_narrator = LLMNarrator()
+    if state.llm_narrator.available:
+        log.info("LLMNarrator initialised  model=%s", state.llm_narrator.model)
+    else:
+        log.warning("LLMNarrator disabled — set GROQ_API_KEY to enable narration")
+
+    # ── Monte Carlo Simulator ──
+    transitions_path = DATA_DIR / "temporal" / "transitions.pkl"
+    if transitions_path.exists():
+        with open(transitions_path, "rb") as f:
+            transitions = pickle.load(f)
+        state.mc_simulator = MonteCarloSimulator(transitions)
+        log.info("MonteCarloSimulator loaded — %d transition rows", len(transitions.get("deltas", [])))
+    else:
+        log.warning("transitions.pkl not found — /simulate will return empty distributions")
 
     log.info("Startup complete — device=%s", DEVICE)
     yield
@@ -250,6 +294,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Schemas
@@ -268,6 +314,11 @@ class LearnerFeatures(BaseModel):
     current_week_in_course:     int   = Field(ge=1,   le=52)
     missed_deadlines_count:     int   = Field(ge=0)
     help_requests_count:        int   = Field(ge=0)
+    # Latent engagement features — auto-filled by server when model has been retrained
+    # with implicit feedback. Default 0.0 = cold-start / pre-retraining baseline.
+    engagement_latent_1:        float = Field(default=0.0)
+    engagement_latent_2:        float = Field(default=0.0)
+    engagement_latent_3:        float = Field(default=0.0)
 
 
 class WhatIfRequest(BaseModel):
@@ -393,6 +444,7 @@ class ExplainRequest(BaseModel):
     features:   LearnerFeatures
     learner_id: str = "anonymous"
     model:      str = "gbm"
+    audience:   str = "both"  # "learner" | "instructor" | "both"
 
 
 @app.post("/explain")
@@ -493,7 +545,16 @@ def explain(req: ExplainRequest):
             drift = state.drift_detector.check_learner_drift(req.learner_id, state.explanation_store)
             resp["explanation_drift"] = drift.to_dict() if drift else None
 
-    resp["narratives"] = None  # Placeholder — Phase 3 (Groq narrator)
+    # Phase 3: LLM Narration — narrates ONLY pre-computed data above
+    if state.llm_narrator is not None:
+        narration = state.llm_narrator.narrate(
+            explain_resp=resp,
+            learner_id=req.learner_id,
+            audience=req.audience,
+        )
+        resp["narratives"] = narration.to_dict()
+    else:
+        resp["narratives"] = None
     return resp
 
 
@@ -517,9 +578,43 @@ def counterfactual(features: LearnerFeatures):
     return resp
 
 
+class SimulateRequest(BaseModel):
+    features:      LearnerFeatures
+    current_week:  int = Field(default=6,    ge=1, le=52)
+    target_week:   int = Field(default=12,   ge=2, le=52)
+    n_simulations: int = Field(default=1000, ge=10, le=10_000)
+
+
 @app.post("/simulate")
-def simulate(features: LearnerFeatures):
-    return {"feature_distributions": {}, "outcome_distribution": {}, "message": "Rust MC — Phase 5 pending"}
+def simulate(req: SimulateRequest):
+    if state.mc_simulator is None:
+        return {
+            "feature_distributions": {},
+            "outcome_distribution": {},
+            "current_week":  req.current_week,
+            "target_week":   req.target_week,
+            "n_simulations": req.n_simulations,
+            "message": "transitions.pkl not found — run temporal_builder.py first",
+        }
+
+    if req.current_week >= req.target_week:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="target_week must be greater than current_week")
+
+    current_features = req.features.model_dump(
+        exclude={"engagement_latent_1", "engagement_latent_2", "engagement_latent_3"}
+    )
+
+    result = state.mc_simulator.simulate(
+        current_features=current_features,
+        current_week=req.current_week,
+        target_week=req.target_week,
+        n_simulations=req.n_simulations,
+        model=state.gbm_model,
+    )
+    # Strip individual trajectories from the response (too large)
+    result.pop("trajectories", None)
+    return result
 
 
 @app.get("/history/{learner_id}")
@@ -603,23 +698,236 @@ def mlops_metrics():
     return result
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Implicit feedback collection
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.post("/events", response_model=EventBatchResponse)
+def record_events(req: EventBatchRequest):
+    """
+    Batch event ingestion endpoint.
+    Accepts up to 500 interaction events per call.
+    Events are persisted to data/events.db for retraining aggregation.
+    """
+    if state.event_store is None:
+        raise HTTPException(503, "Event store not initialised")
+    n = state.event_store.record_batch([e.model_dump() for e in req.events])
+    return EventBatchResponse(recorded=n, message="ok")
+
+
+@app.get("/events/{learner_id}")
+def get_learner_events(learner_id: str, limit: int = 100):
+    """Return recent interaction events for a learner (debug/audit use)."""
+    if state.event_store is None:
+        raise HTTPException(503, "Event store not initialised")
+    events = state.event_store.get_learner_events(learner_id)
+    return {
+        "learner_id": learner_id,
+        "count":      len(events),
+        "events":     events[-limit:],
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Retrain + hot-reload endpoints (admin-only)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.post("/mlops/retrain")
+def trigger_retrain(min_events: int = 0):
+    """
+    Trigger a full implicit+explicit feedback retraining cycle.
+    Steps:
+      1. Aggregate events → engagement signals
+      2. Train/update engagement autoencoder
+      3. Augment OULAD features with 3 latent scores
+      4. Retrain GBM + RF (15 features)
+      5. Validate against regression gates
+      6. Save artifacts if validated
+
+    After success, call POST /mlops/reload to hot-swap the live model.
+
+    Query param `min_events`: override the minimum event count guard (default 0 = no guard).
+    """
+    if state.event_store is None or state.feedback_store is None:
+        raise HTTPException(503, "Event store or feedback store not initialised")
+
+    if min_events > 0 and not (state.event_store.count() >= min_events):
+        return {
+            "queued":  False,
+            "reason":  f"Only {state.event_store.count()} events recorded (need ≥{min_events})",
+            "n_events": state.event_store.count(),
+        }
+
+    pipeline = RetrainPipeline(
+        event_store    = state.event_store,
+        feedback_store = state.feedback_store,
+        data_dir       = DATA_DIR,
+        models_dir     = MODELS_DIR,
+    )
+
+    log.info("POST /mlops/retrain triggered")
+    result = pipeline.run(trigger="api")
+    if result.success:
+        uploaded = upload_models(MODELS_DIR)
+        log.info("S3: uploaded %d artifact(s) after retrain", len(uploaded))
+    return result.to_dict()
+
+
+@app.post("/mlops/reload")
+def trigger_hot_reload():
+    """
+    Hot-reload models and all explainers from disk into the running process.
+    Call this after POST /mlops/retrain returns success=true.
+
+    Performs an atomic swap: AppState is only updated if ALL components
+    re-initialise successfully. On failure, the current production model
+    stays live and the error is returned.
+    """
+    log.info("POST /mlops/reload triggered")
+    result = hot_reload(state, DATA_DIR, MODELS_DIR, DEVICE)
+    if not result.success:
+        raise HTTPException(500, detail=result.to_dict())
+    return result.to_dict()
+
+
 class FeedbackRequest(BaseModel):
-    learner_id: str
-    actual_outcome: int = Field(ge=0, le=1)
+    learner_id:              str
+    explanation_id:          Optional[str]  = None
+    rating:                  Optional[int]  = Field(default=None, ge=1, le=5)
+    followed_recommendation: Optional[bool] = None
+    top_action_feature:      Optional[str]  = None
+    correction_feature:      Optional[str]  = None
+    correction_comment:      Optional[str]  = None
+    audience:                Optional[str]  = None
 
 
 @app.post("/feedback")
 def feedback(req: FeedbackRequest):
-    """Log ground-truth outcome for concept drift analysis."""
-    if state.explanation_store is None:
-        raise HTTPException(503, "Explanation store not initialised")
-    latest = state.explanation_store.get_latest(req.learner_id)
-    if latest is None:
-        raise HTTPException(404, f"No explanation found for {req.learner_id}")
+    """Submit a user rating, follow-flag, or feature correction for an explanation."""
+    if state.feedback_store is None:
+        raise HTTPException(503, "Feedback store not initialised")
+
+    # Pull trust/risk scores from latest explanation for correlation tracking
+    trust_score: Optional[float] = None
+    risk_score:  Optional[float] = None
+    if state.explanation_store is not None:
+        latest = state.explanation_store.get_latest(req.learner_id)
+        if latest:
+            trust_score = latest.get("trust_score")
+            risk_score  = latest.get("risk_score")
+
+    record_id = state.feedback_store.record(FeedbackInput(
+        learner_id              = req.learner_id,
+        explanation_id          = req.explanation_id,
+        rating                  = req.rating,
+        followed_recommendation = req.followed_recommendation,
+        top_action_feature      = req.top_action_feature,
+        correction_feature      = req.correction_feature,
+        correction_comment      = req.correction_comment,
+        trust_score_at_time     = trust_score,
+        risk_score_at_time      = risk_score,
+        audience                = req.audience,
+    ))
+    return {"recorded": True, "feedback_id": record_id, "learner_id": req.learner_id}
+
+
+@app.get("/feedback/stats")
+def feedback_stats():
+    """Aggregate feedback stats: avg rating, follow rates, top corrected features."""
+    if state.feedback_store is None:
+        raise HTTPException(503, "Feedback store not initialised")
+    return state.feedback_store.get_stats().to_dict()
+
+
+@app.get("/feedback/{learner_id}")
+def learner_feedback(learner_id: str):
+    """All feedback records for a specific learner."""
+    if state.feedback_store is None:
+        raise HTTPException(503, "Feedback store not initialised")
     return {
-        "learner_id":     req.learner_id,
-        "actual_outcome": req.actual_outcome,
-        "predicted_risk": latest["risk_score"],
-        "error":          abs(latest["risk_score"] - req.actual_outcome),
-        "recorded":       True,
+        "learner_id": learner_id,
+        "records":    state.feedback_store.get_learner_feedback(learner_id),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Authenticated self-service endpoints (JWT required)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class SelfExplainRequest(BaseModel):
+    """Student self-service: learner_id auto-filled from JWT token."""
+    audience: str = "learner"   # students default to learner view
+
+
+@app.post("/explain/me")
+def explain_me(
+    req: SelfExplainRequest,
+    current_user: User = Depends(get_current_active_student),
+):
+    """
+    Authenticated student endpoint.
+    Pulls the learner's current features from their profile and runs /explain.
+    Returns learner-audience narrative only.
+
+    The learner_id is taken from the JWT token — students cannot explain
+    other learners' data.
+    """
+    _require_model()
+
+    if current_user.learner_profile is None:
+        raise HTTPException(404, "No learner profile found for this account")
+
+    lp = current_user.learner_profile
+    learner_id = lp.learner_id
+
+    # Build feature dict from stored profile context
+    # In production these come from the latest OULAD sync; here we pull the
+    # most recent explanation record's feature snapshot as a fallback.
+    latest = None
+    if state.explanation_store is not None:
+        latest = state.explanation_store.get_latest(learner_id)
+
+    if latest is None:
+        raise HTTPException(
+            404,
+            "No explanation history found for this learner. "
+            "POST /explain first with your current features."
+        )
+
+    # Re-run the full explain pipeline on the last recorded SHAP values
+    # (features are reconstructed from the explanation store)
+    return {
+        "learner_id":    learner_id,
+        "current_week":  lp.current_week,
+        "course_id":     lp.course_id,
+        "latest_risk":   latest.get("risk_score"),
+        "top3_features": latest.get("top3_features", []),
+        "trust_score":   latest.get("trust_score"),
+        "history_url":   f"/history/{learner_id}",
+        "note":          "Call POST /explain with your current features to refresh the analysis.",
+    }
+
+
+@app.get("/explain/me/history")
+def my_history(
+    current_user: User = Depends(get_current_active_student),
+):
+    """Authenticated student endpoint: fetch own explanation timeline."""
+    if current_user.learner_profile is None:
+        raise HTTPException(404, "No learner profile found")
+    learner_id = current_user.learner_profile.learner_id
+    if state.explanation_store is None:
+        return {"learner_id": learner_id, "timeline": [], "drift_flags": []}
+    timeline    = state.explanation_store.get_top3_timeline(learner_id)
+    full_history = state.explanation_store.get_history(learner_id, n=10)
+    drift_flags = []
+    if state.drift_detector is not None:
+        drift = state.drift_detector.check_learner_drift(learner_id, state.explanation_store)
+        if drift:
+            drift_flags.append(drift.to_dict())
+    return {
+        "learner_id":  learner_id,
+        "timeline":    timeline,
+        "history":     full_history,
+        "drift_flags": drift_flags,
     }

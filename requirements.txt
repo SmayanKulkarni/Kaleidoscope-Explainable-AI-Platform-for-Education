@@ -1,0 +1,66 @@
+# XAI Learning Recommendation System — Backend Dependencies
+# Install: pip install -r requirements.txt
+
+# ── Web framework ──────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9        # form data for OAuth2PasswordRequestForm
+
+# ── Data validation ────────────────────────────────────────────────────────────
+pydantic>=2.7.0
+pydantic[email]>=2.7.0         # EmailStr in auth schemas
+
+# ── Database (auth + explanation store) ───────────────────────────────────────
+sqlalchemy>=2.0.0
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# ── LLM Narration ─────────────────────────────────────────────────────────────
+groq>=0.9.0
+
+# ── Core ML ───────────────────────────────────────────────────────────────────
+numpy>=1.26.0
+pandas>=2.2.0
+scikit-learn>=1.4.0
+scipy>=1.12.0
+
+# ── Deep learning (LSTM + DeepSHAP) ──────────────────────────────────────────
+torch>=2.2.0
+
+# ── XAI — Feature attribution ─────────────────────────────────────────────────
+shap>=0.45.0
+
+# ── XAI — Counterfactuals ─────────────────────────────────────────────────────
+dice-ml>=0.11
+
+# ── XAI — Rule-based (Anchors) ────────────────────────────────────────────────
+alibi>=0.9.4
+
+# ── XAI — Uncertainty (Conformal prediction) ──────────────────────────────────
+mapie>=0.8.0
+
+# ── XAI — Causal inference ────────────────────────────────────────────────────
+dowhy>=0.11.1
+networkx>=3.3
+
+# ── MLOps — Experiment tracking ───────────────────────────────────────────────
+mlflow>=2.12.0
+
+# ── MLOps — Data drift monitoring ─────────────────────────────────────────────
+evidently>=0.4.30
+
+# ── Hyperparameter tuning ─────────────────────────────────────────────────────
+optuna>=3.6.0
+
+# ── Database drivers + migrations ────────────────────────────────────────────
+psycopg2-binary>=2.9.9         # PostgreSQL driver for SQLAlchemy (production)
+alembic>=1.13.0                # Database schema migrations
+
+# ── AWS ───────────────────────────────────────────────────────────────────────
+boto3>=1.34.0                  # S3 model artifact store + ECR login
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0           # load .env for GROQ_API_KEY, JWT_SECRET_KEY etc.
+httpx>=0.27.0                  # async HTTP client (tests)

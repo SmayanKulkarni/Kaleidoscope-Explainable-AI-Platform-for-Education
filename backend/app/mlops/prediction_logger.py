@@ -1,8 +1,9 @@
 """
 Prediction Logger
 ==================
-Logs every /predict call to a rolling SQLite table for monitoring and
+Logs every /predict call to a rolling table for monitoring and
 drift analysis.  Auto-prunes to keep the most recent N rows.
+Uses PostgreSQL in production (via DATABASE_URL) or SQLite locally.
 
 Public API
 ----------
@@ -33,6 +34,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
+from backend.app.db_config import make_engine
+
 log = logging.getLogger(__name__)
 
 Base = declarative_base()
@@ -52,14 +55,21 @@ class PredictionRecord(Base):
 class PredictionLogger:
     def __init__(
         self,
-        db_url: str = "sqlite:///data/predictions.db",
+        db_url: str = "",
         max_rows: int = 10_000,
     ):
-        self.engine   = create_engine(db_url, echo=False)
+        if db_url:
+            self.engine = create_engine(
+                db_url,
+                connect_args={"check_same_thread": False} if db_url.startswith("sqlite") else {},
+                echo=False,
+            )
+        else:
+            self.engine = make_engine("predictions")
         Base.metadata.create_all(self.engine)
         self.Session  = sessionmaker(bind=self.engine)
         self.max_rows = max_rows
-        log.info("PredictionLogger initialised  db=%s  max_rows=%d", db_url, max_rows)
+        log.info("PredictionLogger initialised  max_rows=%d", max_rows)
 
     def log(
         self,

@@ -1,0 +1,23 @@
+{
+  "_description": "Medium-risk learner fixture — inconsistent engagement, borderline performance",
+  "_usage": "POST /explain with this as the 'features' body",
+  "features": {
+    "login_frequency_weekly": 3.0,
+    "avg_session_duration_min": 35.0,
+    "forum_posts_count": 2,
+    "video_completion_rate": 0.52,
+    "quiz_avg_score": 58.0,
+    "quiz_completion_rate": 0.55,
+    "assignment_submission_rate": 0.60,
+    "days_since_last_activity": 5,
+    "prior_course_completions": 1,
+    "current_week_in_course": 5,
+    "missed_deadlines_count": 2,
+    "help_requests_count": 1,
+    "engagement_latent_1": 0.0,
+    "engagement_latent_2": 0.0,
+    "engagement_latent_3": 0.0
+  },
+  "learner_id": "fixture-medium-risk-001",
+  "audience": "both"
+}

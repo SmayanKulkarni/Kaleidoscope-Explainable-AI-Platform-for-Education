@@ -102,10 +102,17 @@ class ActionRanker:
         for i, f in enumerate(feature_names):
             self.actionability_weights[f] = float(np.clip(iqrs[i] / max_iqr, 0.1, 1.0))
 
-        # Immutable features get near-zero actionability
-        for f in ["prior_course_completions", "current_week_in_course"]:
+        # Immutable + latent features get zero actionability
+        _non_actionable = [
+            "prior_course_completions",
+            "current_week_in_course",
+            "engagement_latent_1",
+            "engagement_latent_2",
+            "engagement_latent_3",
+        ]
+        for f in _non_actionable:
             if f in self.actionability_weights:
-                self.actionability_weights[f] = 0.05
+                self.actionability_weights[f] = 0.0
 
         log.info("ActionRanker initialised  actionability learned from IQR of %d features", len(feature_names))
 
@@ -146,6 +153,10 @@ class ActionRanker:
 
         ranked = []
         for action in dice_actions:
+            # Skip latent engagement features — not actionable by the learner
+            if action.feature.startswith("engagement_latent_"):
+                continue
+
             shap_mag       = abs(shap_values.get(action.feature, 0.0))
             actionability  = self.actionability_weights.get(action.feature, 0.5)
             causal_w       = self._get_causal_weight(action.feature)
