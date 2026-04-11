@@ -1,5 +1,6 @@
 # Implementation Plan — XAI Learning Recommendation System
 <<<<<<< HEAD
+<<<<<<< HEAD
 # 24-Hour Hackathon Sprint
 
 > Copy this file into your GitHub Copilot workspace.
@@ -29,6 +30,8 @@ pip install \
   pytest httpx
 
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 # Hackathon Sprint
 
 > **XAI Stack (final, no redundancy):**
@@ -58,12 +61,16 @@ pip install \
 pip install maturin
 cd mc_simulator && maturin develop --release
 
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 # Frontend
 npx create-react-app frontend --template typescript
 cd frontend && npm install recharts tailwindcss @headlessui/react axios
 ```
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 ### Generate Synthetic Data First
 ```bash
@@ -73,6 +80,8 @@ python backend/app/model/mock_data.py
 ```
 
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ### Data (DONE ✅)
 ```bash
 # Static features (one row per student)
@@ -92,11 +101,15 @@ python backend/app/model/temporal_builder.py
 > `predict_proba()` to produce outcome distributions.
 > Used by LLM narrator: "If current patterns continue, 72% chance of dropout by week 16."
 
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ---
 
 ## Phase 1 — Foundation (Hours 1–3)
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 **Goal:** Working model + SHAP + basic API running
 
@@ -160,6 +173,8 @@ Validate with:
 pred = model.predict_proba([X])[0][1]
 assert abs(sum(shap_vals.values()) + base_value - pred) < 0.05, "SHAP fidelity check failed"
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Goal:** Trained model + SHAP working + API serving predictions
 
 ---
@@ -216,11 +231,15 @@ class DropoutLSTM(nn.Module):
     def forward(self, x, lengths=None):
         out, (h_n, _) = self.lstm(x)
         return self.fc(h_n[-1])  # last hidden state
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ```
 
 ---
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 ### Task 1.4 — FastAPI Base + /predict Endpoint
 **File:** `backend/app/main.py`
@@ -238,6 +257,8 @@ Copilot prompt:
 ```python
 # Pydantic models for type safety
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ### Task 1.2 — Dual SHAP Explainer Module
 **File:** `backend/app/explainers/shap_explainer.py`
 **Status:** Pending
@@ -280,6 +301,9 @@ assert abs(sum(shap_vals.values()) + base_value - pred) < 0.05
 >   - `GET  /history/{learner_id}` → explanation timeline + drift flags
 
 ```python
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 class LearnerFeatures(BaseModel):
     login_frequency_weekly: float = Field(ge=0, le=14)
@@ -301,9 +325,15 @@ class LearnerFeatures(BaseModel):
 ---
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 ## Phase 2 — Core XAI Engine (Hours 3–8)
 
 **Goal:** All 7 MVP components implemented
+=======
+## Phase 2 — XAI Engine (Hours 3–8)
+
+**Goal:** All 7 explanation + 2 tracking modules implemented
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 ## Phase 2 — XAI Engine (Hours 3–8)
 
@@ -314,6 +344,7 @@ class LearnerFeatures(BaseModel):
 
 ### Task 2.1 — DiCE Counterfactual Engine
 **File:** `backend/app/explainers/dice_explainer.py`
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 Copilot prompt:
@@ -329,6 +360,8 @@ result = dice_explainer.get_counterfactuals(high_risk_learner_features)
 assert len(result.actions) >= 1
 assert result.actions[0].priority_rank == 1
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Status:** Pending
 
 > DiCEExplainer wrapping dice-ml. Lock immutable features
@@ -340,6 +373,9 @@ Test:
 ```python
 result = dice_explainer.get_counterfactuals(high_risk_features)
 assert len(result.actions) >= 1
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 assert all(f not in result.changed_features for f in IMMUTABLE_FEATURES)
 ```
@@ -348,6 +384,7 @@ assert all(f not in result.changed_features for f in IMMUTABLE_FEATURES)
 
 ### Task 2.2 — Anchors Rule Explainer
 **File:** `backend/app/explainers/anchors_explainer.py`
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 Copilot prompt:
@@ -381,6 +418,8 @@ def build_keras_surrogate(sklearn_model, X_train, y_train):
     model.fit(X_train, soft_labels, epochs=50, batch_size=32, verbose=0)
     return model
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Status:** Pending
 
 > AnchorsExplainer using `alibi.explainers.AnchorTabular` with quartile discretizer.
@@ -399,11 +438,15 @@ class AnchorsExplainer:
             discretizer='quartile'
         )
         self.explainer.fit(X_train)
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ```
 
 ---
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 ### Task 2.4 — Prototype Explainer
 **File:** `backend/app/explainers/prototype_explainer.py`
@@ -420,6 +463,8 @@ Fallback implementation:
 from sklearn.neighbors import NearestNeighbors
 
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ### Task 2.3 — Prototype Explainer
 **File:** `backend/app/explainers/prototype_explainer.py`
 **Status:** Pending
@@ -429,6 +474,9 @@ from sklearn.neighbors import NearestNeighbors
 > similarity score, top-2 distinguishing features, motivational narrative.
 
 ```python
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 class PrototypeExplainer:
     def __init__(self, X_train, y_train, learner_ids, feature_names):
@@ -437,15 +485,19 @@ class PrototypeExplainer:
         self.nn = NearestNeighbors(n_neighbors=5, metric='cosine')
         self.nn.fit(self.X_scaled)
 <<<<<<< HEAD
+<<<<<<< HEAD
         self.y_train = y_train
         self.learner_ids = learner_ids
         self.feature_names = feature_names
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ```
 
 ---
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 ### Task 2.5 — Archipelago Interaction Detector
 **File:** `backend/app/explainers/archipelago.py`
@@ -538,6 +590,8 @@ Copilot prompt:
 > Prompt includes: top3_shap_features, anchor_rule, counterfactual_actions, risk_score,
 > prototype_narrative."
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ### Task 2.4 — Archipelago Interaction Detector
 **File:** `backend/app/explainers/archipelago.py`
 **Status:** Pending
@@ -739,6 +793,9 @@ class DriftMonitor:
 >
 > CRITICAL: LLM receives ONLY pre-computed XAI data. It NEVER generates explanations.
 > Payload sent to LLM: `{shap_top3, interactions, anchor_rule, actions, prototypes, risk_score, uncertainty, causal_annotations}`.
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ```python
@@ -759,6 +816,7 @@ and recommended intervention. Be precise and data-driven. Under 150 words.
 ---
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 ### Task 3.2 — Uncertainty Estimator
 **File:** `backend/app/evaluator/uncertainty_estimator.py`
 
@@ -774,11 +832,15 @@ Copilot prompt:
 =======
 ## Phase 4 — Frontend (Hours 10–16)
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
+## Phase 4 — Frontend (Hours 10–16)
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 **Goal:** Interactive React dashboard with real model feedback
 
 ---
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 ### Task 4.1 — What-If Panel (Most Critical UI)
 **File:** `frontend/src/components/WhatIfPanel.jsx`
@@ -790,6 +852,8 @@ Copilot prompt:
 > Show BEFORE vs AFTER side-by-side. Risk badge: green (LOW) / yellow (MEDIUM) / red (HIGH).
 > FastSHAP values update the bar chart in real-time."
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ### Task 4.1 — What-If Panel
 **File:** `frontend/src/components/WhatIfPanel.jsx`
 **Status:** Pending
@@ -798,12 +862,16 @@ Copilot prompt:
 > On slider change: debounce 300ms → `POST /whatif` → re-render risk badge + SHAP bar chart.
 > BEFORE vs AFTER side-by-side. Risk badge: green/yellow/red.
 > TreeSHAP values update the bar chart (no FastSHAP needed — TreeSHAP is fast enough).
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ---
 
 ### Task 4.2 — Explanation Card
 **File:** `frontend/src/components/ExplanationCard.jsx`
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 Copilot prompt:
@@ -815,6 +883,8 @@ Copilot prompt:
 > 5. Interaction highlight ('⚠️ Low quiz scores + high inactivity amplify each other')
 > 6. LLM narration text (audience-appropriate)"
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Status:** Pending
 
 > Sections:
@@ -824,12 +894,16 @@ Copilot prompt:
 > 4. Prototype match ("Similar to 2 learners who completed")
 > 5. Interaction highlight ("⚠️ Low quiz scores + high inactivity amplify each other")
 > 6. LLM narration text (audience-toggled)
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ---
 
 ### Task 4.3 — Audience Toggle
 **File:** `frontend/src/components/AudienceToggle.jsx`
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 Copilot prompt:
@@ -838,17 +912,23 @@ Copilot prompt:
 > Instructor view: feature breakdown table, SHAP waterfall, model confidence, anchor rule,
 > causal vs correlational annotations, trust score details."
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Status:** Pending
 
 > Toggle: 'Learner View' / 'Instructor View'.
 > - Learner: motivational LLM text, risk badge, prototype narrative, top action card.
 > - Instructor: SHAP waterfall, anchor rule, causal annotations, trust details, interaction table.
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ---
 
 ### Task 4.4 — Counterfactual View
 **File:** `frontend/src/components/CounterfactualView.jsx`
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 Copilot prompt:
@@ -857,16 +937,22 @@ Copilot prompt:
 > plain language instruction, causal badge (🔗 Causal | 〰️ Correlated).
 > Ranked by priority. Add 'Apply This Change' button that pre-fills What-If sliders."
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Status:** Pending
 
 > DiCE action cards. Each: feature name, current → target, impact bar, plain language,
 > causal badge. 'Apply This Change' button pre-fills What-If sliders.
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ---
 
 ### Task 4.5 — Consistency Timeline
 **File:** `frontend/src/components/ConsistencyTimeline.jsx`
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 Copilot prompt:
@@ -913,6 +999,8 @@ Copilot prompt:
 > Store in FeedbackRecord SQLite table. GET /feedback/stats returns aggregate
 > recommendation_follow_rate, avg_rating per feature."
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 **Status:** Pending
 
 > Recharts LineChart: top-3 SHAP over sessions. Red marker on drift. Tooltip at each point.
@@ -1033,6 +1121,9 @@ class DLExplainer:
 > Overlay MC simulation confidence band (10th–90th percentile projections).
 > Red shading when projected dropout probability > 50%.
 > Tooltip shows DeepSHAP attribution at each time point.
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ---
@@ -1044,6 +1135,7 @@ class DLExplainer:
 ### Task 6.1 — XAI SDK Package
 **File:** `backend/sdk/xai_sdk/`
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 Copilot prompt:
 > "Create installable Python package xai-learner-sdk with:
@@ -1064,6 +1156,8 @@ explanation = client.explain_learner({
 print(explanation.top_action)
 # → "Complete 3 more quizzes this week → estimated 34% risk reduction"
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 > pip-installable `xai-learner-sdk` with XAIClient wrapping all API calls.
 
 ```python
@@ -1075,6 +1169,9 @@ explanation = client.explain_learner({
     ...
 })
 print(explanation.top_action)
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ```
 
@@ -1084,11 +1181,16 @@ print(explanation.top_action)
 **Files:** `Dockerfile.backend`, `Dockerfile.frontend`, `docker-compose.yml`
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 Copilot prompt:
 > "Create multi-stage Dockerfile for FastAPI backend (python:3.11-slim).
 > Dockerfile for React frontend (node:18-alpine + nginx).
 > docker-compose.yml with backend (port 8000), frontend (port 3000), both with
 > health checks. Backend env vars: MODEL_PATH, DB_URL, ANTHROPIC_API_KEY."
+=======
+> Backend: python:3.11-slim + FastAPI. Frontend: node:18-alpine + nginx.
+> docker-compose with health checks. Env: MODEL_PATH, DB_URL, GROQ_API_KEY.
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 > Backend: python:3.11-slim + FastAPI. Frontend: node:18-alpine + nginx.
 > docker-compose with health checks. Env: MODEL_PATH, DB_URL, GROQ_API_KEY.
@@ -1101,9 +1203,13 @@ Copilot prompt:
 ### Task 7.1 — Integration Tests
 ```python
 <<<<<<< HEAD
+<<<<<<< HEAD
 # pytest tests/test_pipeline.py
 def test_full_pipeline_high_risk_learner():
     """Test complete P→E→D→P flow for a high-risk learner."""
+=======
+def test_full_pipeline():
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 def test_full_pipeline():
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
@@ -1112,6 +1218,7 @@ def test_full_pipeline():
         "quiz_completion_rate": 0.2,
         "assignment_submission_rate": 0.3,
         "days_since_last_activity": 12,
+<<<<<<< HEAD
 <<<<<<< HEAD
         # ... all features
     }
@@ -1149,6 +1256,8 @@ def test_full_pipeline():
 □ GET /health returns 200
 □ SDK installable: pip install -e backend/sdk
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
         ...
     }
     pred = client.post("/predict", json=features).json()
@@ -1185,11 +1294,15 @@ def test_full_pipeline():
 □ MLflow UI accessible at :5000
 □ Docker: docker-compose up works
 □ GET /health returns 200
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ```
 
 ---
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 ## Pitch Deck Structure (Final 30 mins)
 
@@ -1202,6 +1315,8 @@ def test_full_pipeline():
 7. **Causal Layer** — Distinguishing correlation from causation (brownie)
 8. **SDK** — pip install xai-learner-sdk
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ## Pitch Deck (Final 30 mins)
 
 1. **Problem** — Black-box learning platforms, no trust, no action
@@ -1214,4 +1329,7 @@ def test_full_pipeline():
 8. **MLOps** — MLflow tracking + Evidently drift monitoring + model registry + auto-retrain
 9. **Rust** — Monte Carlo simulator in Rust (PyO3) — 100× faster than Python
 10. **SDK** — pip install xai-learner-sdk
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60

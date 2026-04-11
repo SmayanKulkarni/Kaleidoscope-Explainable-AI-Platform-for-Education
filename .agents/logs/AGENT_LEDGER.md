@@ -20,7 +20,10 @@
 - **Why it was done:** To ensure cross-IDE compatibility and robust long-term LLM collaboration.
 - **Dependencies/Impacts:** Core rule files now depend on this ledger being updated.
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ### [2026-04-11 12:37] Cascade (Windsurf) - OULAD Data Pipeline Implementation
 - **Files Created:** `backend/app/model/data_loader.py`, `requirements-data.txt`, `backend/__init__.py`, `backend/app/__init__.py`, `backend/app/model/__init__.py`
@@ -99,4 +102,7 @@
 - **What was done:** Instantiated Git LFS locally for ML artifacts (`*.csv`, `*.pkl`, `*.bin`, etc.). Evaluated the repository block due to the 432MB `studentVle.csv` blob, successfully executed an aggressive rewrite (`git lfs migrate import --everything`) converting historical Blobs into LFS pointers, and executed a clean `git push --force` upstream.
 - **Why it was done:** GitHub enforces strict 100MB thresholds on standard blobs; without LFS rewriting, the historical presence of the raw OULAD tables blocked `push`.
 - **Dependencies/Impacts:** To consume datasets or models locally, future developers/agents **must** possess `git-lfs` (i.e. `git lfs pull` to resolve tracking pointers).
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60

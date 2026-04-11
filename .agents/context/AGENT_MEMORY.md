@@ -4,6 +4,7 @@
 
 ## Current Sprint Goal
 <<<<<<< HEAD
+<<<<<<< HEAD
 - **Phase 1-3:** Build MVP Backend for XAI Recommendation Engine. (Refer to `LLM_WIKI.md` and `docs/IMPLEMENTATION_PLAN.md`).
 
 ## Active Context
@@ -21,6 +22,8 @@
 ## Open Problems / Blockers
 - None at this time. Wait for data generation.
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 - **Phase 1-3:** Build MVP Backend for XAI Recommendation Engine. (Refer to `LLM_WIKI.md` and `files/IMPLEMENTATION_PLAN.md`).
 
 ## Active Context
@@ -89,6 +92,9 @@
 - `forum_posts_count`, `video_completion_rate`, `avg_session_duration_min`, `help_requests_count` are VLE-approximated / synthetically augmented. Document in model card (auto-generated via Task M.5).
 - LSTM requires PyTorch — adds ~2GB to Docker image. Consider CPU-only build.
 - Rust MC requires Rust toolchain for build. Provide pre-built wheel or fallback to Python.
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ---
