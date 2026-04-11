@@ -34,6 +34,7 @@ from threading import Lock
 from typing import Any, Dict, Optional
 
 import numpy as np
+import pandas as pd
 import torch
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -1097,13 +1098,23 @@ def mlops_health():
 
 @app.get("/mlops/drift-report")
 def mlops_drift_report():
+    drift_fallback_reason = ""
     if state.drift_monitor is None:
-        raise HTTPException(503, "Drift monitor not initialised")
+        try:
+            state.drift_monitor = DriftMonitor(
+                reference_data=state.X_train,
+                feature_names=state.feature_names,
+            )
+            log.info("DriftMonitor lazily initialised from /mlops/drift-report")
+        except Exception as e:
+            drift_fallback_reason = f"monitor_init_failed: {e}"
+            log.warning("DriftMonitor lazy init failed, using fallback: %s", e)
 
     # Try cached report first
-    cached = state.drift_monitor.get_cached_report()
-    if cached is not None:
-        return cached.to_dict()
+    if state.drift_monitor is not None:
+        cached = state.drift_monitor.get_cached_report()
+        if cached is not None:
+            return cached.to_dict()
 
     # Run fresh report from recent predictions
     if state.prediction_logger is None:
@@ -1114,8 +1125,112 @@ def mlops_drift_report():
         return {"dataset_drift": False, "n_drifted_features": 0,
                 "message": "Not enough predictions logged yet"}
 
-    report = state.drift_monitor.check_drift(current)
-    return report.to_dict()
+    try:
+        if state.drift_monitor is not None:
+            report = state.drift_monitor.check_drift(current)
+            return report.to_dict()
+        if not drift_fallback_reason:
+            drift_fallback_reason = "monitor_unavailable"
+    except Exception as e:
+        # Degrade gracefully so admin dashboard remains usable even when
+        # optional drift dependencies are unavailable.
+        drift_fallback_reason = f"monitor_check_failed: {e}"
+        log.warning("Drift report fallback engaged: %s", e)
+
+    # Lightweight fallback: mark feature drift by standardized mean shift.
+    try:
+        if isinstance(current, pd.DataFrame):
+            cur_df = current.copy()
+        else:
+            cur_df = pd.DataFrame(current)
+        cur_df.columns = [str(c) for c in cur_df.columns]
+        cur_df = cur_df.apply(pd.to_numeric, errors="coerce")
+
+        # Reference mode A: training baseline when available.
+        if state.X_train is not None and state.feature_names:
+            ref_df = pd.DataFrame(state.X_train)
+            ref_df = ref_df.apply(pd.to_numeric, errors="coerce")
+
+            n_cols = min(ref_df.shape[1], cur_df.shape[1], len(state.feature_names))
+            if n_cols == 0:
+                raise ValueError("training/current matrices have no comparable columns")
+
+            # Build stable, unique display names from model feature names.
+            base_names = [str(x) for x in state.feature_names[:n_cols]]
+            seen = {}
+            deduped_names = []
+            for name in base_names:
+                idx = seen.get(name, 0)
+                deduped_names.append(name if idx == 0 else f"{name}__{idx}")
+                seen[name] = idx + 1
+
+            ref_df = ref_df.iloc[:, :n_cols].copy()
+            cur_df = cur_df.iloc[:, :n_cols].copy()
+            ref_df.columns = deduped_names
+            cur_df.columns = deduped_names
+
+            avail = [f for f in deduped_names if not cur_df[f].isna().all()]
+            if not avail:
+                raise ValueError("no comparable columns between current and training reference")
+
+            ref_df = ref_df[avail]
+            cur_df = cur_df[avail]
+        else:
+            # Reference mode B: self-baseline split from current predictions.
+            numeric_cols = [c for c in cur_df.columns if not cur_df[c].isna().all()]
+            if len(numeric_cols) == 0:
+                raise ValueError("current predictions contain no numeric columns")
+
+            cur_df = cur_df[numeric_cols]
+            split = max(1, len(cur_df) // 2)
+            if len(cur_df) < 2:
+                raise ValueError("not enough predictions for self-baseline fallback")
+
+            ref_df = cur_df.iloc[:split]
+            cur_df = cur_df.iloc[split:]
+            if cur_df.empty:
+                raise ValueError("not enough recent rows after self-baseline split")
+            avail = list(cur_df.columns)
+
+        ref_mean = ref_df.mean(numeric_only=True)
+        ref_std = ref_df.std(numeric_only=True).replace(0, 1e-6)
+        cur_mean = cur_df.mean(numeric_only=True)
+
+        shift = ((cur_mean - ref_mean).abs() / ref_std).fillna(0.0)
+        drift_mask = shift > 1.0
+        n_drifted = int(drift_mask.sum())
+        n_total = int(len(avail))
+        drift_share = n_drifted / max(n_total, 1)
+
+        feature_drifts = [
+            {
+                "feature": feat,
+                "drift_detected": bool(drift_mask.get(feat, False)),
+                "statistic": float(round(shift.get(feat, 0.0), 6)),
+                "p_value": 1.0,
+                "method": "z_mean_shift_fallback",
+            }
+            for feat in avail
+        ]
+
+        return {
+            "dataset_drift": drift_share >= 0.2,
+            "n_drifted_features": n_drifted,
+            "n_total_features": n_total,
+            "drift_share": round(drift_share, 4),
+            "feature_drifts": feature_drifts,
+            "message": f"Fallback drift report ({drift_fallback_reason or 'monitor_unavailable'})",
+        }
+    except Exception as fallback_err:
+        log.warning("Fallback drift computation failed: %s", fallback_err)
+        return {
+            "dataset_drift": False,
+            "n_drifted_features": 0,
+            "n_total_features": 0,
+            "drift_share": 0.0,
+            "feature_drifts": [],
+            "message": f"Drift unavailable ({drift_fallback_reason or 'insufficient_data'}; fallback_failed: {fallback_err})",
+        }
 
 
 @app.get("/mlops/metrics")
@@ -1463,10 +1578,8 @@ def _merge_item(item: RecoItem) -> Dict[str, Any]:
 @app.get("/causal/graph")
 def causal_graph():
     """Feature 10: return the causal DAG as a JSON structure for frontend rendering."""
-    if state.causal_annotator is None:
-        raise HTTPException(503, "Causal annotator not initialised")
-
-    effects = state.causal_annotator.get_causal_effects()
+    annotator_available = state.causal_annotator is not None
+    effects = state.causal_annotator.get_causal_effects() if annotator_available else {}
 
     _groups = {
         "confounder":  ["prior_course_completions", "current_week_in_course"],
@@ -1518,7 +1631,179 @@ def causal_graph():
     for p in _perf: edges.append({"from": p, "to": _out})
     for r in _risk: edges.append({"from": r, "to": _out})
 
-    return {"nodes": nodes, "edges": edges}
+    payload = {"nodes": nodes, "edges": edges}
+    if not annotator_available:
+        payload["message"] = "Causal annotator not initialised; returning static DAG"
+    return payload
+
+
+# ── /fairness/explain ─────────────────────────────────────────────────────
+
+_FAIRNESS_SYSTEM_PROMPT = """
+You are a fairness auditor narrating pre-computed algorithmic fairness results for a school administrator.
+
+STRICT RULES:
+- ONLY describe what is present in the data payload. Never invent numbers or group sizes.
+- Never say "probably", "might", or "could" — only state what the data shows.
+- When protected attribute data is absent, clearly explain WHY (items lacked those fields) and what
+  that means for the validity of the result.
+- Return a JSON object with EXACTLY these 4 fields, no markdown wrapper:
+    "methodology"  : 1-2 sentences on what the check does and what threshold was used.
+    "findings"     : 2-3 sentences on group distributions found, and any disparities flagged.
+                     If no groups had data, explain that explicitly.
+    "verdict"      : 1 sentence — is the system fair, and what does that actually mean here?
+    "action_items" : list of 1-3 specific, actionable strings for the admin.
+- Total response must be parseable JSON. No explanation outside the JSON.
+""".strip()
+
+_FAIRNESS_USER_TEMPLATE = """
+Fairness Audit Results:
+
+Methodology:
+- Protected groups audited: {protected_features}
+- Disparity threshold: {threshold_pct:.0f}% relative mean-score deviation
+- Items scored: {item_count}
+- Overall mean recommendation score: {overall_mean:.4f}
+
+Data availability:
+- Features with demographic data found: {features_with_data}
+- Features with NO data (absent from all scored items): {features_without_data}
+
+Result: {result_label}
+
+Group score breakdown (feature → group → mean score):
+{group_scores_text}
+
+Flagged disparities:
+{flagged_text}
+
+Narrate these audit results for an admin. Return JSON only.
+""".strip()
+
+
+class FairnessExplainRequest(BaseModel):
+    report: dict  # the full FairnessReport.to_dict() output
+
+
+@app.post("/fairness/explain")
+def fairness_explain(req: FairnessExplainRequest):
+    """
+    Uses Groq LLM to narrate a pre-computed FairnessReport in plain English.
+    Returns { methodology, findings, verdict, action_items }.
+    """
+    if state.llm_narrator is None or not state.llm_narrator.available:
+        return {
+            "methodology":  "Fairness check compares mean recommendation scores across demographic groups and flags groups deviating more than the threshold from the overall mean.",
+            "findings":     "LLM narration unavailable (GROQ_API_KEY not set). See raw group_scores and flagged_disparities in the audit report.",
+            "verdict":      "Unable to generate plain-language verdict without LLM access.",
+            "action_items": ["Set GROQ_API_KEY environment variable to enable narration."],
+            "source":       "fallback",
+        }
+
+    report    = req.report
+    meta      = report.get("metadata", {})
+    protected = meta.get("protected_features_checked", [])
+    with_data = meta.get("features_with_data", [])
+    without   = [f for f in protected if f not in with_data]
+    overall_fair      = report.get("overall_fair", True)
+    flagged           = report.get("flagged_disparities", [])
+    group_scores      = report.get("group_scores", {})
+
+    # Build human-readable group scores block
+    if group_scores:
+        lines = []
+        for feat, groups in group_scores.items():
+            for grp, score in groups.items():
+                lines.append(f"  {feat} [{grp}] → {score:.4f}")
+        group_scores_text = "\n".join(lines)
+    else:
+        group_scores_text = "  (no demographic data found in scored items)"
+
+    # Build flagged block
+    if flagged:
+        flag_lines = []
+        for d in flagged:
+            flag_lines.append(
+                f"  ⚑ {d['feature']} [{d['group']}]: score={d['score']:.4f}, "
+                f"deviation={d['deviation_pct']:+.1f}% ({d['direction']})"
+            )
+        flagged_text = "\n".join(flag_lines)
+    else:
+        flagged_text = "  None — no group exceeded the disparity threshold."
+
+    result_label = (
+        "FAIR — no significant disparities detected"
+        if overall_fair
+        else f"DISPARITIES DETECTED — {len(flagged)} group(s) flagged"
+    )
+
+    user_prompt = _FAIRNESS_USER_TEMPLATE.format(
+        protected_features   = ", ".join(protected) if protected else "none specified",
+        threshold_pct        = meta.get("disparity_threshold_pct", 15.0),
+        item_count           = meta.get("item_count", 0),
+        overall_mean         = meta.get("overall_mean", 0.0),
+        features_with_data   = ", ".join(with_data) if with_data else "none",
+        features_without_data= ", ".join(without) if without else "none",
+        result_label         = result_label,
+        group_scores_text    = group_scores_text,
+        flagged_text         = flagged_text,
+    )
+
+    try:
+        import json as _json
+        from groq import Groq as _Groq
+        _client = _Groq(api_key=state.llm_narrator.api_key)
+        _resp   = _client.chat.completions.create(
+            model    = state.llm_narrator.model,
+            messages = [
+                {"role": "system", "content": _FAIRNESS_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature = 0.3,
+            max_tokens  = 500,
+        )
+        raw = (_resp.choices[0].message.content or "{}").strip()
+        # Strip markdown fence if present
+        if raw.startswith("```"):
+            raw = "\n".join(raw.splitlines()[1:])
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+        parsed = _json.loads(raw)
+        parsed["source"] = "groq"
+        return parsed
+    except Exception as _e:
+        log.warning("fairness_explain: Groq call failed (%s) — returning fallback", _e)
+        n_groups = sum(len(g) for g in group_scores.values())
+        return {
+            "methodology":  (
+                f"Checks mean recommendation score per demographic group across "
+                f"{', '.join(protected) if protected else 'no configured'} attributes. "
+                f"Groups deviating >{meta.get('disparity_threshold_pct', 15):.0f}% from the "
+                f"overall mean ({meta.get('overall_mean', 0):.3f}) are flagged."
+            ),
+            "findings":     (
+                f"Scored {meta.get('item_count', 0)} item(s). "
+                + (f"Found demographic data for: {', '.join(with_data)}. " if with_data else
+                   f"No protected attribute data found in the scored items "
+                   f"({', '.join(without) if without else 'all features absent'} were missing). ")
+                + (f"{len(flagged)} disparity(ies) flagged." if flagged else "No disparities flagged.")
+            ),
+            "verdict":      (
+                "No disparities detected — but note: the result is only as meaningful as the "
+                "demographic data present in the scored items."
+                if overall_fair
+                else f"{len(flagged)} group(s) show score disparities exceeding the threshold."
+            ),
+            "action_items": (
+                ["Include protected attributes (explicit_gender, explicit_age_band, explicit_disability) "
+                 "in the scored item features to get a meaningful fairness analysis."]
+                if not with_data
+                else ["Review flagged groups and their score deviations in the audit panel above."]
+            ),
+            "source": "fallback",
+        }
 
 
 # ── /recommend/health ─────────────────────────────────────────────────────

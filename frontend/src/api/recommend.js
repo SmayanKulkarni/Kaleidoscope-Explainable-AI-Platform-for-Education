@@ -1,5 +1,8 @@
 import { client } from './client';
 
+export const explainFairness = (report) =>
+  client.post('/fairness/explain', { report }).then((r) => r.data);
+
 export const recommendStudent = (learner_id, items, top_k = 5, include_shap = true) =>
   client.post('/recommend/student', { learner_id, items, top_k, include_shap }).then((r) => r.data);
 

@@ -32,12 +32,25 @@ class FairnessReport:
     overall_fair:        bool
     group_scores:        Dict[str, Dict[str, float]]  # feature → {group_value → mean_score}
     flagged_disparities: List[Dict]                   # list of flagged group dicts
+    # Audit metadata — used by /fairness/explain LLM endpoint
+    overall_mean:               float = 0.0
+    item_count:                 int   = 0
+    protected_features_checked: List[str] = field(default_factory=list)
+    features_with_data:         List[str] = field(default_factory=list)
+    disparity_threshold_pct:    float = 15.0
 
     def to_dict(self) -> dict:
         return {
             "overall_fair":        self.overall_fair,
             "group_scores":        self.group_scores,
             "flagged_disparities": self.flagged_disparities,
+            "metadata": {
+                "overall_mean":               round(self.overall_mean, 5),
+                "item_count":                 self.item_count,
+                "protected_features_checked": self.protected_features_checked,
+                "features_with_data":         self.features_with_data,
+                "disparity_threshold_pct":    self.disparity_threshold_pct,
+            },
         }
 
 
@@ -92,11 +105,17 @@ class FairnessAuditor:
                 overall_fair=True,
                 group_scores={},
                 flagged_disparities=[],
+                overall_mean=0.0,
+                item_count=len(items),
+                protected_features_checked=self.protected_features,
+                features_with_data=[],
+                disparity_threshold_pct=self.disparity_threshold * 100,
             )
 
         overall_mean = sum(scores) / len(scores)
         group_scores: Dict[str, Dict[str, float]] = {}
         flagged: List[Dict] = []
+        features_with_data: List[str] = []
 
         for feat in self.protected_features:
             # Skip features absent from all items
@@ -115,6 +134,7 @@ class FairnessAuditor:
             if not groups:
                 continue
 
+            features_with_data.append(feat)
             group_means = {g: sum(vs) / len(vs) for g, vs in groups.items()}
             group_scores[feat] = {g: round(v, 5) for g, v in group_means.items()}
 
@@ -138,4 +158,9 @@ class FairnessAuditor:
             overall_fair=len(flagged) == 0,
             group_scores=group_scores,
             flagged_disparities=flagged,
+            overall_mean=overall_mean,
+            item_count=len(items),
+            protected_features_checked=self.protected_features,
+            features_with_data=features_with_data,
+            disparity_threshold_pct=self.disparity_threshold * 100,
         )

@@ -3,16 +3,21 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getHealth, getMlopsHealth, getMlopsMetrics, getMlopsDriftReport, triggerRetrain, triggerReload } from '../api/dropout';
-import { recommendHealth, recommendStudent } from '../api/recommend';
+import { recommendHealth, recommendStudent, explainFairness } from '../api/recommend';
 import FairnessAuditPanel from '../components/panels/FairnessAuditPanel';
 import GraphCard from '../components/layout/GraphCard';
 
 const CausalDagGraph = lazy(() => import('../components/graphs/CausalDagGraph'));
 
+// Representative sample — includes protected attributes so the fairness audit has
+// demographic data to bucket and compare across groups.
 const ADMIN_SAMPLE_ITEMS = [
-  { item_id: 'Module 4 Quiz',     features: { difficulty: 0.6, time_required: 30 } },
-  { item_id: 'TA Office Hours',   features: { difficulty: 0.2, time_required: 60 } },
-  { item_id: 'Forum Week 6',      features: { difficulty: 0.1, time_required: 15 } },
+  { item_id: 'Module 4 Quiz',     features: { difficulty: 0.6, time_required: 30,  explicit_gender: 'M',   explicit_age_band: '0-35',  explicit_disability: 'N' } },
+  { item_id: 'TA Office Hours',   features: { difficulty: 0.2, time_required: 60,  explicit_gender: 'F',   explicit_age_band: '0-35',  explicit_disability: 'N' } },
+  { item_id: 'Forum Week 6',      features: { difficulty: 0.1, time_required: 15,  explicit_gender: 'M',   explicit_age_band: '35-55', explicit_disability: 'N' } },
+  { item_id: 'Practice Set A',    features: { difficulty: 0.5, time_required: 45,  explicit_gender: 'F',   explicit_age_band: '35-55', explicit_disability: 'Y' } },
+  { item_id: 'Video Lecture 7',   features: { difficulty: 0.3, time_required: 20,  explicit_gender: 'M',   explicit_age_band: '55<=',  explicit_disability: 'N' } },
+  { item_id: 'Peer Review Task',  features: { difficulty: 0.4, time_required: 35,  explicit_gender: 'F',   explicit_age_band: '0-35',  explicit_disability: 'Y' } },
 ];
 
 function HealthDot({ ok }) {
@@ -35,12 +40,18 @@ function StatCard({ label, value, icon, sub }) {
 export default function AdminDashboard() {
   const [canaryFraction, setCanaryFraction] = useState(0.1);
   const [runFairness, setRunFairness]       = useState(false);
+  const [fairnessExplanation, setFairnessExplanation] = useState(null);
 
   const { data: fairnessSample, isLoading: fairnessLoading } = useQuery({
     queryKey: ['admin-fairness-sample'],
-    queryFn:  () => recommendStudent('admin_sample', ADMIN_SAMPLE_ITEMS, 3),
+    queryFn:  () => recommendStudent('admin_sample', ADMIN_SAMPLE_ITEMS, 6),
     enabled:  runFairness,
     staleTime: 5 * 60 * 1000,
+  });
+
+  const explainMutation = useMutation({
+    mutationFn: (report) => explainFairness(report),
+    onSuccess:  (data)   => setFairnessExplanation(data),
   });
 
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 });
@@ -171,7 +182,12 @@ export default function AdminDashboard() {
               ) : fairnessLoading ? (
                 <div className="animate-pulse h-32 bg-surface-container rounded-xl" />
               ) : fairnessSample?.fairness_audit ? (
-                <FairnessAuditPanel report={fairnessSample.fairness_audit} />
+                <FairnessAuditPanel
+                  report={fairnessSample.fairness_audit}
+                  explanation={fairnessExplanation}
+                  explaining={explainMutation.isPending}
+                  onExplain={() => explainMutation.mutate(fairnessSample.fairness_audit)}
+                />
               ) : (
                 <p className="text-sm text-slate-400">No fairness audit data returned — backend may not support it yet.</p>
               )}
