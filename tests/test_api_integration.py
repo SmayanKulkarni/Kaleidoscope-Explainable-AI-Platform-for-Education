@@ -614,6 +614,23 @@ class TestFeedback:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestMLOps:
+    def _admin_headers(self, client):
+        reg = client.post("/auth/register", json={
+            "username": "mlops_admin_api",
+            "email":    "mlops_admin_api@example.com",
+            "password": "Str0ngPass!",
+            "role":     "admin",
+        })
+        assert reg.status_code in {200, 201, 409}
+
+        login = client.post(
+            "/auth/login",
+            json={"username": "mlops_admin_api", "password": "Str0ngPass!"},
+        )
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
     def test_mlops_health_200(self, client):
         r = client.get("/mlops/health")
         assert r.status_code == 200
@@ -633,12 +650,12 @@ class TestMLOps:
         assert "model_version" in d
 
     def test_mlops_retrain_no_events_returns_result(self, client):
-        r = client.post("/mlops/retrain?min_events=0")
+        r = client.post("/mlops/retrain?min_events=0", headers=self._admin_headers(client))
         # May succeed or fail gracefully (no training data in test env) — no 500
         assert r.status_code in {200, 503}
 
     def test_mlops_reload_when_no_new_model_graceful(self, client):
-        r = client.post("/mlops/reload")
+        r = client.post("/mlops/reload", headers=self._admin_headers(client))
         assert r.status_code in {200, 500}  # 500 is acceptable — returns detail dict
 
 

@@ -136,6 +136,23 @@
   - numpy pickle version mismatch → re-ran trainer.py.
 - **Verified:** All 15 modules import OK. Server healthy on CUDA. /predict, /explain (all 9 keys present), /history, /mlops/* return correct JSON.
 
+### [2026-04-11 19:30] Cascade — Docs Sync + Missing Artifacts
+
+- **Problem:** IMPLEMENTATION_PLAN.md had unresolved 3-way merge conflicts throughout; all task statuses were stale (Pending); API_SPEC.md documented old envelope pattern and obsolete endpoints; dl_explainer.py, mc_simulator/, backend/sdk/ were missing; Dockerfile naming mismatch; no handoff fixtures.
+- **Files Rewritten:**
+  - `files/IMPLEMENTATION_PLAN.md` — stripped all `<<<<<<`/`=======`/`>>>>>>>` markers; updated all task statuses to ✅ DONE; removed frontend phase (handled by separate team); added Phase 4 auth/events/feedback section; added Phase 5 DL explainer + Rust MC entries; added final verification checklist.
+  - `files/API_SPEC.md` — rewrote to match actual `main.py` signatures: flat request bodies (no envelope), 15 latent features added, all new endpoints documented (/events, /mlops/retrain, /mlops/reload, /auth/*, /explain/me, /feedback/{learner_id}, /simulate with SimulateRequest).
+- **Files Created:**
+  - `backend/app/explainers/dl_explainer.py` — Captum IntegratedGradients + LayerIntegratedGradients for LSTM; `explain_temporal()` returns (T×F) attribution matrix; `temporal_attention_summary()`; `cross_validate()` against DeepSHAP by rank correlation; `_LSTMScalarWrapper` for scalar output required by Captum.
+  - `mc_simulator/Cargo.toml` — pyo3 0.21 + rayon 1.10 + rand 0.8 + ndarray 0.15; cdylib crate type.
+  - `mc_simulator/pyproject.toml` — maturin ≥1.4 build backend.
+  - `mc_simulator/src/lib.rs` — `simulate_trajectories()` PyO3 function; Rayon parallel iterator over N simulations; per-simulation SmallRng seeded from `seed + sim_idx`; bounds clipping; validated delta pool shape.
+  - `backend/sdk/xai_sdk/__init__.py` — package root, exports XAIClient.
+  - `backend/sdk/xai_sdk/client.py` — XAIClient with httpx (optional, falls back to urllib); methods: predict, explain, whatif, counterfactual, simulate, history, feedback, feedback_stats, mlops_health, mlops_metrics, mlops_drift_report.
+  - `backend/sdk/pyproject.toml` — installable as `pip install -e backend/sdk`.
+  - `Dockerfile.backend` — copy of Dockerfile (resolves plan/repo naming mismatch).
+  - `data/fixtures/high_risk_learner.json`, `medium_risk_learner.json`, `low_risk_learner.json` — stable handoff payloads for frontend team.
+
 ### [2026-04-11 16:10] GitHub Copilot (GPT-5.3-Codex) - Implementation Plan Frontend Scope Removal
 - **Files Modified:** `files/IMPLEMENTATION_PLAN.md`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
 - **What was done:** Removed frontend build/setup/tasks/checklist items from the implementation plan, replaced Phase 4 with backend integration support for API-contract freeze and fixture handoff, and normalized Docker planning to backend-only services.

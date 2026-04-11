@@ -1,21 +1,15 @@
 {
   "gbm": {
-    "train_auc_roc": 0.9514,
-    "train_avg_precision": 0.8688,
-    "train_f1": 0.8192,
-    "train_brier_score": 0.0817,
     "test_auc_roc": 0.9427,
-    "test_avg_precision": 0.8439,
+    "test_avg_precision": 0.844,
     "test_f1": 0.8035,
-    "test_brier_score": 0.0873,
-    "training_time_sec": 22.6
+    "test_brier_score": 0.0873
   },
   "rf": {
-    "test_auc_roc": 0.9425,
-    "test_avg_precision": 0.8442,
-    "test_f1": 0.7851,
-    "test_brier_score": 0.0902,
-    "training_time_sec": 1.7
+    "test_auc_roc": 0.9422,
+    "test_avg_precision": 0.842,
+    "test_f1": 0.786,
+    "test_brier_score": 0.0903
   },
   "feature_names": [
     "login_frequency_weekly",
@@ -29,6 +23,19 @@
     "prior_course_completions",
     "current_week_in_course",
     "missed_deadlines_count",
-    "help_requests_count"
+    "help_requests_count",
+    "engagement_latent_1",
+    "engagement_latent_2",
+    "engagement_latent_3",
+    "engagement_latent_1",
+    "engagement_latent_2",
+    "engagement_latent_3"
+  ],
+  "model_version": "gbm-v2",
+  "n_features": 18,
+  "latent_features_added": [
+    "engagement_latent_1",
+    "engagement_latent_2",
+    "engagement_latent_3"
   ]
 }

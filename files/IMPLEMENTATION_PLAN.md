@@ -1,48 +1,13 @@
 # Implementation Plan — XAI Learning Recommendation System
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-# 24-Hour Hackathon Sprint
-
-> Copy this file into your GitHub Copilot workspace.
-> Use each task block as a prompt: describe the task, paste the relevant
-> section, and let Copilot generate the implementation.
-
----
-
-## Pre-Sprint Setup (30 mins)
-
-### Environment
-```bash
-# Create project
-mkdir xai-learning-system && cd xai-learning-system
-python -m venv .venv && source .venv/bin/activate
-
-# Install all dependencies
-pip install \
-  scikit-learn numpy pandas scipy \
-  shap fastshap dice-ml alibi alibi-detect \
-  dowhy pgmpy mapie \
-  aix360 \
-  fastapi uvicorn[standard] sqlalchemy \
-  anthropic \
-  torch torchvision \
-  plotly dash explainerdashboard \
-  pytest httpx
-
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 # Hackathon Sprint
 
-> **XAI Stack (final, no redundancy):**
-> TreeSHAP · DeepSHAP · Archipelago · Anchors · DiCE · Prototypes · MAPIE · Causal DAG · TrustScorer · DriftDetector
+> **XAI Stack:**
+> TreeSHAP · DeepSHAP · Archipelago · Anchors · DiCE · Prototypes · MAPIE · Causal DAG (DoWhy) · TrustScorer · DriftDetector · Integrated Gradients (Captum)
 >
-> **Models:** GBM (static, TreeSHAP) + LSTM (temporal, DeepSHAP)
-> **Removed:** FastSHAP, CEM
-> **Infra:** MLflow (tracking + registry + monitoring) · Rust MC Simulator (PyO3)
+> **Models:** GBM (static, TreeSHAP) + LSTM (temporal, DeepSHAP + Captum)
+> **Infra:** MLflow (tracking + registry + monitoring) · Python MC Simulator · Rust MC Simulator (PyO3, Phase 5)
+>
+> **Note:** Frontend is owned by a separate team. This plan covers backend only.
 
 ---
 
@@ -57,38 +22,15 @@ pip install \
   torch captum \
   mlflow evidently \
   fastapi uvicorn[standard] sqlalchemy \
-  groq \
+  groq dowhy pgmpy \
   pytest httpx
 
-# Rust MC simulator (requires Rust toolchain)
+# Rust MC simulator (Phase 5, optional)
 pip install maturin
 cd mc_simulator && maturin develop --release
-
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 ```
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Generate Synthetic Data First
-```bash
-# Run this before anything else — every module depends on data
-python backend/app/model/mock_data.py
-# Creates: data/learners.csv, data/train.pkl, data/test.pkl
-```
-
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-### Data (DONE ✅)
+### Data ✅ DONE
 ```bash
 # Static features (one row per student)
 python backend/app/model/data_loader.py
@@ -100,1125 +42,306 @@ python backend/app/model/temporal_builder.py
 #         data/temporal/transitions.pkl (162,965 MC transition deltas)
 ```
 
-### Monte Carlo Simulator (DONE ✅)
+### Monte Carlo Simulator ✅ DONE
 **File:** `backend/app/model/temporal_builder.py` — `MonteCarloSimulator` class
-> Given a student's features at week T, samples N=1000 plausible future
-> trajectories from empirical transition distributions and runs model
-> `predict_proba()` to produce outcome distributions.
-> Used by LLM narrator: "If current patterns continue, 72% chance of dropout by week 16."
 
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
----
-
-## Phase 1 — Foundation (Hours 1–3)
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-**Goal:** Working model + SHAP + basic API running
+> Given a student's features at week T, samples N plausible future trajectories
+> from empirical transition distributions and runs `predict_proba()` to produce
+> outcome distributions. Exposed via `POST /simulate`.
 
 ---
 
-### Task 1.1 — Synthetic Data Generator
-**File:** `backend/app/model/mock_data.py`
+## Phase 1 — Foundation ✅ DONE
 
-Copilot prompt:
-> "Generate 1000 synthetic learner records with these features: login_frequency_weekly (1-7),
-> avg_session_duration_min (5-120), forum_posts_count (0-50), video_completion_rate (0-1),
-> quiz_avg_score (0-100), quiz_completion_rate (0-1), assignment_submission_rate (0-1),
-> days_since_last_activity (0-30), prior_course_completions (0-10), current_week_in_course (1-12),
-> missed_deadlines_count (0-10), help_requests_count (0-20).
-> Label: dropout_risk=1 if assignment_submission_rate < 0.4 OR (quiz_completion_rate < 0.5
-> AND days_since_last_activity > 7) OR missed_deadlines_count > 4, else 0.
-> Add realistic noise. Save as CSV and train/test split pickles."
+**Goal:** Trained models + SHAP + API serving predictions
 
-```python
-# Expected output structure
-{
-    "n_samples": 1000,
-    "dropout_rate": "~30%",   # realistic imbalance
-    "files": ["data/learners.csv", "data/train.pkl", "data/test.pkl"],
-    "learner_ids": ["learner_001", ..., "learner_1000"]
-}
-```
-
----
-
-### Task 1.2 — Model Trainer
+### Task 1.1a — GBM Trainer ✅ DONE
 **File:** `backend/app/model/trainer.py`
 
-Copilot prompt:
-> "Train a GradientBoostingClassifier on the learner data with hyperparameter tuning via
-> GridSearchCV. Also train a RandomForestClassifier as the second model for multi-model
-> comparison. Calibrate probabilities with CalibratedClassifierCV. Save both models to
-> models/gbm.pkl and models/rf.pkl. Print classification report and AUC-ROC score."
+- `GradientBoostingClassifier` (primary, TreeSHAP-compatible)
+- `RandomForestClassifier` (secondary, multi-model comparison)
+- Calibrated with `CalibratedClassifierCV`
+- MLflow: `mlflow.sklearn.log_model()`, logs AUC/F1/Brier/calibration metrics
+- Artifacts: `models/gbm.pkl`, `models/rf.pkl`, `models/training_summary.json`
 
-Key requirements:
-- Use `GradientBoostingClassifier` as primary (TreeSHAP compatible)
-- Use `RandomForestClassifier` as secondary (for multi-model comparison brownie)
-- Calibrate with `CalibratedClassifierCV` for reliable `predict_proba`
-- Save feature names list alongside model — SHAP needs it
-
----
-
-### Task 1.3 — SHAP Explainer Module
-**File:** `backend/app/explainers/shap_explainer.py`
-
-Copilot prompt:
-> "Implement SHAPExplainer class using shap.TreeExplainer wrapping the GBM model.
-> Methods: explain(features_dict) → shap_values dict + base_value,
-> stability_score(features_dict, n_runs=20) → float 0-1,
-> global_summary(X_array) → mean absolute SHAP per feature.
-> See XAI_ALGORITHMS.md section 1 for full implementation."
-
-Validate with:
-```python
-# Test: SHAP sum should approximately equal prediction - base_value
-pred = model.predict_proba([X])[0][1]
-assert abs(sum(shap_vals.values()) + base_value - pred) < 0.05, "SHAP fidelity check failed"
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-**Goal:** Trained model + SHAP working + API serving predictions
-
----
-
-### Task 1.1a — GBM Trainer (Static Model)
-**File:** `backend/app/model/trainer.py`
-**Status:** Pending
-
-> Load `data/train.pkl`. Train GradientBoostingClassifier (primary, TreeSHAP-compatible)
-> and RandomForestClassifier (secondary, multi-model comparison).
-> Calibrate with CalibratedClassifierCV. Save to `models/gbm.pkl` and `models/rf.pkl`.
-> Log all metrics + hyperparams + model artifacts to MLflow.
-
-Key requirements:
-- `GradientBoostingClassifier` as primary (TreeSHAP compatible)
-- `RandomForestClassifier` as secondary
-- Calibrate with `CalibratedClassifierCV` for reliable `predict_proba`
-- Save feature names list alongside model — SHAP needs it
-- MLflow: `mlflow.sklearn.log_model()`, log AUC/F1/calibration metrics
-
----
-
-### Task 1.1b — LSTM Trainer (Temporal Model)
+### Task 1.1b — LSTM Trainer ✅ DONE
 **File:** `backend/app/model/lstm_trainer.py`
-**Status:** Pending
 
-> Load `data/temporal/snapshots.pkl`. Reshape into sequences (6 time-steps × 12 features).
-> Train a 2-layer LSTM → Dense(1, sigmoid) for dropout prediction.
-> The LSTM sees the *trajectory* of a student over weeks 2–12 and predicts final dropout.
->
-> Architecture:
-> ```
-> Input(6, 12) → LSTM(64) → LSTM(32) → Dropout(0.3) → Dense(1, sigmoid)
-> ```
+- PyTorch `DropoutLSTM` — `Input(6, 12) → LSTM(64) → LSTM(32) → Dropout(0.3) → Dense(1)`
+- Trained with `BCEWithLogitsLoss`, AdamW, early stopping on validation AUC (patience=5)
+- MLflow: `mlflow.pytorch.log_model()`
+- Artifacts: `models/lstm.pt`, `models/lstm_config.json`
 
-Key requirements:
-- PyTorch `nn.Module` subclass: `DropoutLSTM`
-- Pad students missing early snapshots with zero-vectors + attention mask
-- Train with `BCEWithLogitsLoss`, AdamW optimizer, lr=1e-3, 50 epochs
-- Early stopping on validation AUC (patience=5)
-- Save to `models/lstm.pt` + `models/lstm_config.json`
-- MLflow: `mlflow.pytorch.log_model()`, log training curves
-- Expose `predict_proba(X_sequence)` method for XAI pipeline compatibility
-
-```python
-class DropoutLSTM(nn.Module):
-    def __init__(self, n_features=12, hidden_dim=64, n_layers=2, dropout=0.3):
-        super().__init__()
-        self.lstm = nn.LSTM(n_features, hidden_dim, n_layers, batch_first=True, dropout=dropout)
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_dim, 32), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(32, 1)
-        )
-    def forward(self, x, lengths=None):
-        out, (h_n, _) = self.lstm(x)
-        return self.fc(h_n[-1])  # last hidden state
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-```
-
----
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Task 1.4 — FastAPI Base + /predict Endpoint
-**File:** `backend/app/main.py`
-
-Copilot prompt:
-> "Create FastAPI app with:
-> GET /health → {status: ok, model_version, timestamp}
-> POST /predict → accepts LearnerFeatures pydantic model, returns PredictionResult
-> POST /explain → accepts learner_id + features, returns ExplanationResult
-> POST /whatif → accepts features + modifications dict, returns live prediction + SHAP
-> POST /counterfactual → accepts features, returns CounterfactualResult
-> GET /history/{learner_id} → returns explanation timeline
-> Use lifespan context manager to load models once at startup."
-
-```python
-# Pydantic models for type safety
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-### Task 1.2 — Dual SHAP Explainer Module
+### Task 1.2 — Dual SHAP Explainer ✅ DONE
 **File:** `backend/app/explainers/shap_explainer.py`
-**Status:** Pending
 
-> SHAPExplainer supporting both GBM (TreeSHAP) and LSTM (DeepSHAP).
-> Methods:
->   - `explain(features_dict, model_type='gbm')` → `{shap_values: dict, base_value: float}`
->   - `explain_whatif(features_dict)` → TreeSHAP re-run on modified features
->   - `explain_temporal(feature_sequence)` → DeepSHAP on LSTM → per-timestep attributions
->   - `stability_score(features_dict, n_runs=20)` → float 0-1
->   - `global_summary(X_array)` → mean |SHAP| per feature
+- `TreeExplainer` for GBM (extracts base estimator from `CalibratedClassifierCV`)
+- `DeepExplainer` for LSTM
+- Methods: `explain()`, `explain_whatif()`, `explain_temporal()`, `stability_score()`, `global_summary()`
 
-```python
-class SHAPExplainer:
-    def __init__(self, gbm_model, lstm_model=None, X_background=None):
-        self.tree_explainer = shap.TreeExplainer(gbm_model)
-        if lstm_model:
-            self.deep_explainer = shap.DeepExplainer(lstm_model, X_background)
-```
-
-Validate:
-```python
-pred = model.predict_proba([X])[0][1]
-assert abs(sum(shap_vals.values()) + base_value - pred) < 0.05
-```
-
----
-
-### Task 1.3 — FastAPI Base + /predict Endpoint
+### Task 1.3 — FastAPI Base ✅ DONE
 **File:** `backend/app/main.py`
-**Status:** Pending
 
-> FastAPI app with lifespan context manager loading models once at startup.
-> Endpoints:
->   - `GET  /health` → `{status, model_version, timestamp}`
->   - `POST /predict` → accepts LearnerFeatures, returns `{risk_score, risk_label, uncertainty}`
->   - `POST /explain` → full suite: `{shap_values, interactions, anchor_rule, prototypes, actions, causal, trust, narratives}`
->   - `POST /whatif` → TreeSHAP on modified features → `{shap_values, risk_score, delta}`
->   - `POST /counterfactual` → DiCE → ranked `PrescriptiveAction` list
->   - `GET  /history/{learner_id}` → explanation timeline + drift flags
-
-```python
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-class LearnerFeatures(BaseModel):
-    login_frequency_weekly: float = Field(ge=0, le=14)
-    avg_session_duration_min: float = Field(ge=0, le=300)
-    forum_posts_count: int = Field(ge=0)
-    video_completion_rate: float = Field(ge=0.0, le=1.0)
-    quiz_avg_score: float = Field(ge=0.0, le=100.0)
-    quiz_completion_rate: float = Field(ge=0.0, le=1.0)
-    assignment_submission_rate: float = Field(ge=0.0, le=1.0)
-    days_since_last_activity: int = Field(ge=0)
-    prior_course_completions: int = Field(ge=0)
-    current_week_in_course: int = Field(ge=1, le=52)
-    missed_deadlines_count: int = Field(ge=0)
-    help_requests_count: int = Field(ge=0)
-```
-
-**Checkpoint:** `curl localhost:8000/health` returns `{status: ok}` ✅
+- `GET  /health`
+- `POST /predict` — `{risk_score, risk_label, uncertainty}`
+- `POST /explain` — full XAI suite
+- `POST /whatif` — TreeSHAP on modified features
+- `POST /counterfactual` — DiCE ranked actions
+- `GET  /history/{learner_id}` — timeline + drift flags
 
 ---
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-## Phase 2 — Core XAI Engine (Hours 3–8)
+## Phase 2 — XAI Engine ✅ DONE
 
-**Goal:** All 7 MVP components implemented
-=======
-## Phase 2 — XAI Engine (Hours 3–8)
+**Goal:** All 9 explanation + 2 tracking modules
 
-**Goal:** All 7 explanation + 2 tracking modules implemented
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-## Phase 2 — XAI Engine (Hours 3–8)
-
-**Goal:** All 7 explanation + 2 tracking modules implemented
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-## Phase 2 — XAI Engine (Hours 3–8)
-
-**Goal:** All 7 explanation + 2 tracking modules implemented
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-
----
-
-### Task 2.1 — DiCE Counterfactual Engine
+### Task 2.1 — DiCE Counterfactual Engine ✅ DONE
 **File:** `backend/app/explainers/dice_explainer.py`
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 
-Copilot prompt:
-> "Implement DiCEExplainer wrapping dice-ml. Must accept actionability_constraints that
-> lock immutable features (prior_course_completions, current_week_in_course).
-> Generate 3 diverse counterfactuals. Return the closest one as best_cf with:
-> changed_features dict, estimated_impact (delta predict_proba), and ranked PrescriptiveActions.
-> Plain language templates for each feature. See XAI_ALGORITHMS.md section 4."
+- Immutable features locked: `prior_course_completions`, `current_week_in_course`, `engagement_latent_*`
+- Permitted ranges learned from data (5th–95th percentile)
+- Returns `CounterfactualResult` with `PrescriptiveAction` list
 
-Test:
-```python
-result = dice_explainer.get_counterfactuals(high_risk_learner_features)
-assert len(result.actions) >= 1
-assert result.actions[0].priority_rank == 1
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-**Status:** Pending
-
-> DiCEExplainer wrapping dice-ml. Lock immutable features
-> (`prior_course_completions`, `current_week_in_course`).
-> Generate 3 diverse counterfactuals. Return closest as best_cf with
-> changed_features, estimated_impact, and ranked PrescriptiveActions.
-
-Test:
-```python
-result = dice_explainer.get_counterfactuals(high_risk_features)
-assert len(result.actions) >= 1
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-assert all(f not in result.changed_features for f in IMMUTABLE_FEATURES)
-```
-
----
-
-### Task 2.2 — Anchors Rule Explainer
+### Task 2.2 — Anchors Rule Explainer ✅ DONE
 **File:** `backend/app/explainers/anchors_explainer.py`
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 
-Copilot prompt:
-> "Implement AnchorsExplainer using alibi.explainers.AnchorTabular with quartile discretizer.
-> explain(features_dict) returns anchor_rule string, precision float, coverage float,
-> and human_readable string. Fit on X_train at init. Threshold: 0.90 precision."
+- `alibi.explainers.AnchorTabular` with quartile discretizer
+- Returns `{anchor_rule, precision, coverage, human_readable}`
 
----
-
-### Task 2.3 — CEM Contrastive Explainer
-**File:** `backend/app/explainers/cem_explainer.py`
-
-Copilot prompt:
-> "Build a Keras MLP surrogate wrapping the sklearn GBM model (same predictions).
-> Use this surrogate to instantiate alibi.explainers.CEM in both PP and PN modes.
-> explain(features) returns pertinent_positives dict, pertinent_negatives dict,
-> and human_readable strings for each. See XAI_ALGORITHMS.md section 5."
-
-```python
-# Keras surrogate for CEM
-def build_keras_surrogate(sklearn_model, X_train, y_train):
-    """Train a small neural net to mimic sklearn model predictions."""
-    model = tf.keras.Sequential([
-        tf.keras.layers.Dense(32, activation='relu', input_shape=(12,)),
-        tf.keras.layers.Dense(16, activation='relu'),
-        tf.keras.layers.Dense(2, activation='softmax')
-    ])
-    # Use sklearn soft labels as targets
-    soft_labels = sklearn_model.predict_proba(X_train)
-    model.compile(optimizer='adam', loss='categorical_crossentropy')
-    model.fit(X_train, soft_labels, epochs=50, batch_size=32, verbose=0)
-    return model
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-**Status:** Pending
-
-> AnchorsExplainer using `alibi.explainers.AnchorTabular` with quartile discretizer.
-> `explain(features_dict)` → `{anchor_rule, precision, coverage, human_readable}`.
-> Fit on X_train at init. Threshold: 0.90 precision.
-> Provides IF-THEN rules for instructor view — the most readable explanation type.
-
-```python
-from alibi.explainers import AnchorTabular
-
-class AnchorsExplainer:
-    def __init__(self, model, X_train, feature_names):
-        self.explainer = AnchorTabular(
-            predictor=model.predict,
-            feature_names=feature_names,
-            discretizer='quartile'
-        )
-        self.explainer.fit(X_train)
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-```
-
----
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Task 2.4 — Prototype Explainer
+### Task 2.3 — Prototype Explainer ✅ DONE
 **File:** `backend/app/explainers/prototype_explainer.py`
 
-Copilot prompt:
-> "Implement PrototypeExplainer using cosine similarity (skip ProtoDash if aix360 install
-> is complex; use sklearn NearestNeighbors instead as fallback). Given a learner's feature
-> vector, find 3 most similar past learners. Return their outcome (completed/dropped_out),
-> similarity score, and the top 2 distinguishing features. Build a motivational narrative
-> string. See XAI_ALGORITHMS.md section 7."
+- cosine k-NN (`sklearn.neighbors.NearestNeighbors`) on `StandardScaler` space
+- Top-2 distinguishing features per match, motivational narrative
 
-Fallback implementation:
-```python
-from sklearn.neighbors import NearestNeighbors
-
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-### Task 2.3 — Prototype Explainer
-**File:** `backend/app/explainers/prototype_explainer.py`
-**Status:** Pending
-
-> k-NN using `sklearn.neighbors.NearestNeighbors` with cosine metric.
-> Given a learner, find 3 most similar past learners. Return outcome,
-> similarity score, top-2 distinguishing features, motivational narrative.
-
-```python
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-class PrototypeExplainer:
-    def __init__(self, X_train, y_train, learner_ids, feature_names):
-        self.scaler = StandardScaler().fit(X_train)
-        self.X_scaled = self.scaler.transform(X_train)
-        self.nn = NearestNeighbors(n_neighbors=5, metric='cosine')
-        self.nn.fit(self.X_scaled)
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        self.y_train = y_train
-        self.learner_ids = learner_ids
-        self.feature_names = feature_names
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-```
-
----
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Task 2.5 — Archipelago Interaction Detector
+### Task 2.4 — Archipelago Interaction Detector ✅ DONE
 **File:** `backend/app/explainers/archipelago.py`
 
-Copilot prompt:
-> "Implement ArchipelagoExplainer using shap.TreeExplainer.shap_interaction_values().
-> get_interactions(features, top_k=5) returns list of {feature_a, feature_b,
-> interaction_score, direction: 'amplifying'|'dampening'}.
-> to_narrative(interactions) returns structured text for LLM narration input.
-> See XAI_ALGORITHMS.md section 3."
+- `shap.TreeExplainer.shap_interaction_values()` — top-k off-diagonal pairs
+- Direction: amplifying / dampening; `to_narrative()` for LLM input
 
----
-
-### Task 2.6 — Explanation Store (Consistency Tracking)
-**File:** `backend/app/tracker/consistency_store.py`
-
-Copilot prompt:
-> "Create ExplanationStore using SQLAlchemy with SQLite.
-> Schema: ExplanationRecord(id, learner_id, timestamp, top3_features JSON,
-> shap_values JSON, risk_score, trust_score).
-> Methods: save(learner_id, explanation) → id,
-> get_history(learner_id) → list[ExplanationRecord] last 10,
-> get_top3_timeline(learner_id) → [{timestamp, top3_features, risk_score}]"
-
----
-
-### Task 2.7 — Drift Detector
-**File:** `backend/app/tracker/drift_detector.py`
-
-Copilot prompt:
-> "Implement ExplanationDriftDetector using Jensen-Shannon Divergence.
-> compare_explanations(prev_shap, curr_shap) → {jsd, rank_shift, drift_detected, flag}.
-> check_learner_drift(learner_id, store) → retrieves last 2 from store and computes drift.
-> Threshold: JSD > 0.15 OR top-3 rank change > 1 feature = drift detected.
-> See XAI_ALGORITHMS.md section 10."
-
----
-
-### Task 2.8 — Trust Score
-**File:** `backend/app/evaluator/trust_scorer.py`
-
-Copilot prompt:
-> "Implement TrustScorer with composite score = 0.4×fidelity + 0.35×stability + 0.25×completeness.
-> Fidelity: how well SHAP sum + base_value ≈ predict_proba output (1 - abs error).
-> Stability: from SHAPExplainer.stability_score().
-> Completeness: fraction of total attribution covered by top-5 features.
-> Returns {trust_score, fidelity, stability, completeness, label: High|Medium|Low}.
-> See XAI_ALGORITHMS.md section 11."
-
----
-
-### Task 2.9 — Causal Annotator
-**File:** `backend/app/causal/causal_annotator.py`
-
-Copilot prompt:
-> "Implement CausalAnnotator using the DAG defined in XAI_ALGORITHMS.md section 9.
-> annotate_shap(shap_values) → augments each feature with {type: causal|correlational, note}.
-> Use hardcoded causal feature list from DAG analysis (no live DoWhy call needed for MVP).
-> For brownie: add estimate_causal_effect(treatment_feature, X_train, y_train) using DoWhy."
-
----
-
-### Task 2.10 — Action Ranker
-**File:** `backend/app/prescriptor/action_ranker.py`
-
-Copilot prompt:
-> "Implement ActionRanker that takes DiCE counterfactual actions and ranks them by:
-> priority_score = shap_magnitude × actionability_weight × (1 if causal else 0.7).
-> FEATURE_ACTIONABILITY_WEIGHTS = {login_frequency_weekly: 0.9, quiz_completion_rate: 0.95,
-> assignment_submission_rate: 1.0, days_since_last_activity: 0.8, ...}.
-> Returns sorted list of PrescriptiveAction with estimated_impact as delta predict_proba."
-
----
-
-## Phase 3 — Dual Audience + LLM Narration (Hours 8–11)
-
-**Goal:** Learner vs Instructor views + LLM narration layer
-
----
-
-### Task 3.1 — LLM Narrator (Narration Only — Not Explanation)
-**File:** `backend/app/narrator/llm_narrator.py`
-
-Copilot prompt:
-> "Implement LLMNarrator using the Anthropic SDK (claude-sonnet-4-20250514).
-> narrate_for_learner(explanation: ExplanationResult) → motivational plain-language string.
-> narrate_for_instructor(explanation: ExplanationResult) → technical summary string.
-> CRITICAL: The LLM receives ONLY pre-computed data (SHAP values, DiCE actions, anchors).
-> It NEVER generates the explanation itself. System prompt must enforce this.
-> Prompt includes: top3_shap_features, anchor_rule, counterfactual_actions, risk_score,
-> prototype_narrative."
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-### Task 2.4 — Archipelago Interaction Detector
-**File:** `backend/app/explainers/archipelago.py`
-**Status:** Pending
-
-> Uses `shap.TreeExplainer.shap_interaction_values()` (already initialized in SHAPExplainer).
-> `get_interactions(features, top_k=5)` → `[{feature_a, feature_b, interaction_score, direction}]`
-> `to_narrative(interactions)` → structured text for LLM narration input.
-
----
-
-### Task 2.5 — Uncertainty Estimator (MAPIE)
+### Task 2.5 — Uncertainty Estimator ✅ DONE
 **File:** `backend/app/evaluator/uncertainty_estimator.py`
-**Status:** Pending
 
-> `UncertaintyEstimator` using `MapieClassifier`.
-> `predict_with_uncertainty(X, alpha=0.1)` → `{prediction, confidence_width, uncertainty_label}`
-> Integrated into `/predict` endpoint.
+- MAPIE v1 `SplitConformalClassifier` — `conformalize()` API
+- `predict_with_uncertainty(X, alpha=0.10)` → `{prediction_set, confidence_width, uncertainty_label}`
+- Integrated into `/predict` and `/explain`
 
----
-
-### Task 2.6 — Causal Annotator
+### Task 2.6 — Causal Annotator ✅ DONE
 **File:** `backend/app/causal/causal_annotator.py`
-**Status:** Pending
 
-> Hardcoded causal feature list from DAG (no live DoWhy needed for MVP).
-> `annotate_shap(shap_values)` → augments each feature with `{type: causal|correlational, note}`.
-> Used by ActionRanker to weight recommendations.
+- DoWhy `CausalModel` per feature — dynamic DAG from domain knowledge (no hardcoding)
+- `backdoor.linear_regression` estimation + `random_common_cause` refutation
+- `engagement_latent_*` features: treated as correlational, not causal (point-biserial fallback)
+- `annotate_shap(shap_values)` → per-feature `{type, ate, is_causal, note}`
 
-Causal features (from DAG):
-```python
-CAUSAL_FEATURES = [
-    "assignment_submission_rate",
-    "quiz_completion_rate",
-    "days_since_last_activity",
-    "missed_deadlines_count",
-    "login_frequency_weekly",
-]
-```
-
----
-
-### Task 2.7 — Action Ranker
+### Task 2.7 — Action Ranker ✅ DONE
 **File:** `backend/app/prescriptor/action_ranker.py`
-**Status:** Pending
 
-> Ranks DiCE counterfactual actions by:
-> `priority_score = shap_magnitude × actionability_weight × (1.0 if causal else 0.7)`
-> Returns sorted `PrescriptiveAction` list with `estimated_impact` as delta predict_proba.
+- IQR-derived actionability weights (data-driven)
+- `priority_score = shap_magnitude × actionability × causal_weight`
+- `engagement_latent_*` and immutables get zero actionability
 
----
-
-### Task 2.8 — Trust Scorer
+### Task 2.8 — Trust Scorer ✅ DONE
 **File:** `backend/app/evaluator/trust_scorer.py`
-**Status:** Pending
 
-> Composite: `0.4×fidelity + 0.35×stability + 0.25×completeness`.
-> - Fidelity: `1 - |SHAP_sum + base - predict_proba|`
-> - Stability: from `SHAPExplainer.stability_score()`
-> - Completeness: fraction of total attribution in top-5 features
-> Returns `{trust_score, fidelity, stability, completeness, label: High|Medium|Low}`
+- `0.40×fidelity + 0.35×stability + 0.25×completeness`
+- Returns `{trust_score, fidelity, stability, completeness, label}`
 
----
-
-### Task 2.9 — Explanation Store + Drift Detector
+### Task 2.9 — Explanation Store + Drift Detector ✅ DONE
 **Files:** `backend/app/tracker/consistency_store.py`, `backend/app/tracker/drift_detector.py`
-**Status:** Pending
 
-> **Store:** SQLAlchemy + SQLite. Schema: `ExplanationRecord(id, learner_id, timestamp, top3_features, shap_values, risk_score, trust_score)`.
-> **Drift:** JSD on consecutive SHAP vectors. Threshold: JSD > 0.15 OR top-3 rank shift > 1.
-
----
-
-## Phase 2A — MLOps Pipeline (Parallel with Phase 2)
-
-**Goal:** Full experiment tracking, model registry, and production monitoring
+- SQLAlchemy + SQLite/PostgreSQL (via `db_config.make_engine`)
+- Drift: JSD on `softmax(|SHAP|)` + top-3 rank shift (threshold: JSD > 0.15)
 
 ---
 
-### Task M.1 — MLflow Experiment Tracking
+## Phase 2A — MLOps Pipeline ✅ DONE
+
+### Task M.1 — MLflow Experiment Tracking ✅ DONE
 **File:** `backend/app/mlops/experiment_tracker.py`
-**Status:** Pending
 
-> Central wrapper for MLflow tracking. All model training (GBM, RF, LSTM) logs here.
-> Tracks: hyperparams, metrics (AUC, F1, Brier score, calibration error), artifacts (model files, SHAP summary plots).
-> MLflow UI at `http://localhost:5000`.
-
-```python
-import mlflow
-
-class ExperimentTracker:
-    def __init__(self, experiment_name="xai-dropout-risk", tracking_uri="mlruns"):
-        mlflow.set_tracking_uri(tracking_uri)
-        mlflow.set_experiment(experiment_name)
-
-    def log_training_run(self, model, model_name, metrics, params, artifacts=None):
-        with mlflow.start_run(run_name=model_name):
-            mlflow.log_params(params)
-            mlflow.log_metrics(metrics)
-            if model_name == "lstm":
-                mlflow.pytorch.log_model(model, "model")
-            else:
-                mlflow.sklearn.log_model(model, "model")
-```
-
-Metrics to log per run:
-```
-auc_roc, f1_score, precision, recall, brier_score,
-calibration_error, mean_shap_fidelity, training_time_sec
-```
-
----
-
-### Task M.2 — Model Registry + Promotion
+### Task M.2 — Model Registry + Promotion ✅ DONE
 **File:** `backend/app/mlops/model_registry.py`
-**Status:** Pending
 
-> MLflow Model Registry for versioning and staging.
-> Models go through: `None → Staging → Production`.
-> `/predict` always loads the `Production` model.
-> Supports rollback: re-promote previous version if drift detected.
+- MLflow stages: `None → Staging → Production`
+- `/predict` always loads Production model; rollback supported
 
-```python
-from mlflow.tracking import MlflowClient
+### Task M.3 — Prediction Logger ✅ DONE
+**File:** `backend/app/mlops/prediction_logger.py`
 
-def promote_model(model_name: str, version: int, stage: str = "Production"):
-    client = MlflowClient()
-    client.transition_model_version_stage(
-        name=model_name, version=version, stage=stage
-    )
-```
+- Rolling SQLite/PostgreSQL table; auto-prune to max_rows=10,000
+- `get_feature_matrix(n)` feeds Evidently drift monitor
 
----
+### Task M.4 — Drift Monitor ✅ DONE
+**File:** `backend/app/mlops/drift_monitor.py`
 
-### Task M.3 — Prediction Logger + Data Drift Monitor
-**File:** `backend/app/mlops/prediction_logger.py`, `backend/app/mlops/drift_monitor.py`
-**Status:** Pending
+- Evidently `DataDriftPreset`; lazy import (avoids litestar dep chain)
+- 1h TTL cache; exposed via `GET /mlops/drift-report`
 
-> **Prediction Logger:** Every `/predict` call logs input features + output risk_score
-> to a rolling SQLite table (`prediction_log`). Used for monitoring.
->
-> **Drift Monitor:** Uses Evidently AI to compare recent prediction inputs against
-> the training distribution. Detects:
-> - **Data drift:** feature distributions shift (KS test, p<0.05)
-> - **Prediction drift:** risk_score distribution shifts
-> - **Concept drift:** actual outcomes vs predicted diverge (requires feedback loop)
-
-```python
-from evidently.report import Report
-from evidently.metric_preset import DataDriftPreset, TargetDriftPreset
-
-class DriftMonitor:
-    def __init__(self, reference_data):  # reference_data = training set
-        self.reference = reference_data
-
-    def check_drift(self, current_data) -> dict:
-        report = Report(metrics=[DataDriftPreset(), TargetDriftPreset()])
-        report.run(reference_data=self.reference, current_data=current_data)
-        return report.as_dict()
-```
-
----
-
-### Task M.4 — MLOps Dashboard Endpoint
-**File:** `backend/app/main.py` (additions)
-**Status:** Pending
-
-> Add monitoring endpoints to FastAPI:
-> - `GET /mlops/health` → model version, last retrain date, drift status
-> - `GET /mlops/drift-report` → latest Evidently drift report (JSON)
-> - `GET /mlops/metrics` → current production model metrics (from MLflow)
-> - `POST /mlops/retrain` → trigger model retraining (admin-only)
-
----
-
-### Task M.5 — Model Card Generator
+### Task M.5 — Model Card Generator ✅ DONE
 **File:** `backend/app/mlops/model_card.py`
-**Status:** Pending
 
-> Auto-generates a Markdown model card from MLflow run metadata.
-> Includes: model type, training data stats, performance metrics,
-> feature importance summary, known limitations (synthetic features),
-> fairness considerations, and XAI method descriptions.
+- Auto-generates `MODEL_CARD.md` from `training_summary.json` + MLflow metadata
+
+### Task M.6 — MLOps Endpoints ✅ DONE
+**File:** `backend/app/main.py`
+
+- `GET  /mlops/health` — model version, drift status, prediction count
+- `GET  /mlops/drift-report` — Evidently JSON report
+- `GET  /mlops/metrics` — production model metrics from training_summary.json
+- `POST /mlops/retrain` — full implicit+explicit feedback retraining cycle
+- `POST /mlops/reload` — hot-swap live model (atomic, fallback-safe)
 
 ---
 
-## Phase 3 — LLM Narration (Hours 8–10)
+## Phase 3 — LLM Narration ✅ DONE
 
-**Goal:** Dual-audience LLM narrator consuming all XAI outputs
-
----
-
-### Task 3.1 — LLM Narrator
+### Task 3.1 — LLM Narrator ✅ DONE
 **File:** `backend/app/narrator/llm_narrator.py`
-**Status:** Pending
 
-> LLMNarrator using Groq SDK.
-> `narrate_for_learner(payload)` → motivational, ≤100 words, ends with one action.
-> `narrate_for_instructor(payload)` → technical, ≤150 words, risk factors + intervention.
->
-> CRITICAL: LLM receives ONLY pre-computed XAI data. It NEVER generates explanations.
-> Payload sent to LLM: `{shap_top3, interactions, anchor_rule, actions, prototypes, risk_score, uncertainty, causal_annotations}`.
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+- Groq SDK (set `GROQ_API_KEY` env var to enable; graceful no-op if absent)
+- `narrate(explain_resp, learner_id, audience)` → `{learner, instructor}` narratives
+- **CRITICAL:** LLM receives ONLY pre-computed XAI data — never generates explanations itself
+- Payload to LLM: `{shap_top3, interactions, anchor_rule, actions, prototypes, risk_score, uncertainty, causal_annotations}`
 
 ```python
 LEARNER_SYSTEM_PROMPT = """
 You are a supportive learning coach. You receive pre-computed AI analysis results
-(not raw data) and narrate them in encouraging, plain language for a student.
-You must ONLY narrate what is in the data provided — never invent new explanations.
-Keep responses under 100 words. End with one specific, actionable sentence.
+and narrate them in encouraging, plain language for a student.
+You must ONLY narrate what is in the data — never invent explanations.
+Keep under 100 words. End with one specific actionable sentence.
 """
 
 INSTRUCTOR_SYSTEM_PROMPT = """
-You are an educational data analyst. You receive pre-computed XAI results and
-summarize them concisely for an instructor. Include: top risk factors, confidence level,
-and recommended intervention. Be precise and data-driven. Under 150 words.
+You are an educational data analyst. Summarize pre-computed XAI results for an instructor.
+Include: top risk factors, confidence level, recommended intervention.
+Be precise and data-driven. Under 150 words.
 """
 ```
 
 ---
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Task 3.2 — Uncertainty Estimator
-**File:** `backend/app/evaluator/uncertainty_estimator.py`
+## Phase 4 — Backend Integration Support ✅ DONE
 
-Copilot prompt:
-> "Implement UncertaintyEstimator using MAPIE (MapieClassifier).
-> fit(X_train, y_train). predict_with_uncertainty(X, alpha=0.1) returns
-> {prediction, confidence_width, uncertainty_label: 'Low'|'Medium'|'High'}.
-> Integrate into /predict endpoint — add uncertainty to PredictionResult."
+> Frontend is handled by a separate team. This phase covers backend contracts and handoff artifacts only.
 
----
+### Task 4.1 — API Contract ✅ DONE
+**File:** `files/API_SPEC.md`
 
-## Phase 4 — Backend Integration Support (Hours 10–16)
+All request/response schemas frozen and in sync with `main.py`.
 
-**Goal:** Finalize backend contracts and artifacts for frontend handoff (frontend is out of scope for this plan)
+### Task 4.2 — Frontend Handoff Fixtures ✅ DONE
 
----
+Sample payloads available:
+- `data/fixtures/high_risk_learner.json`
+- `data/fixtures/medium_risk_learner.json`
+- `data/fixtures/low_risk_learner.json`
 
-### Task 4.1 — API Contract Freeze
-**Files:** `backend/app/main.py`, `files/API_SPEC.md`
-**Status:** Pending
+### Task 4.3 — Auth + Implicit Feedback ✅ DONE
+**Files:** `backend/app/auth/`, `backend/app/tracker/event_store.py`, `backend/app/tracker/feedback_store.py`
 
-> Lock request/response schemas for `/predict`, `/explain`, `/whatif`, `/counterfactual`, `/history/{learner_id}`, and MLOps endpoints.
-> Ensure examples are current and include error payload formats.
+- JWT auth (`POST /auth/register`, `POST /auth/token`)
+- `POST /events` — batch interaction event ingestion (implicit feedback)
+- `POST /feedback` — explicit rating + follow flag + correction
+- `GET  /feedback/stats` — aggregate follow rates, avg rating, top corrected features
+- `GET  /explain/me` — authenticated student self-service endpoint
 
 ---
 
-### Task 4.2 — Frontend Handoff Fixtures
-**Files:** `data/`, `files/CHEATSHEET.md`
-**Status:** Pending
+## Phase 5 — Advanced Features
 
-> Provide stable sample payloads and mocked responses for UI teams:
-> - high-risk learner
-> - medium-risk learner
-> - low-risk learner
-> - temporal sequence sample (for LSTM)
-
----
-
-### Task 4.3 — Backend Latency + Reliability Checks
-**Files:** `backend/app/main.py`, `tests/`
-**Status:** Pending
-
-> Add regression checks for endpoint latency, payload validation, and fallback behavior when optional explainers are unavailable.
-
----
-
-## Phase 5 — Advanced Features (Hours 16–20)
-
----
-
-### Task 5.1 — Rust Monte Carlo Simulator (PyO3)
+### Task 5.1 — Rust Monte Carlo Simulator (PyO3) ✅ SCAFFOLDED
 **Directory:** `mc_simulator/`
-**Status:** Pending
 
-> Rewrite Python MonteCarloSimulator in Rust for 10-100× speedup.
+> Rust reimplementation of `MonteCarloSimulator` for 10–100× speedup.
 > Exposed to Python via PyO3 + maturin. Uses Rayon for parallel trajectory sampling.
->
-> **Structure:**
-> ```
-> mc_simulator/
-> ├── Cargo.toml          # deps: pyo3, rayon, rand, ndarray
-> ├── pyproject.toml      # maturin build config
-> └── src/
->     └── lib.rs          # SimConfig, simulate_trajectories(), Python bindings
-> ```
 
-Core Rust API:
-```rust
-#[pyfunction]
-fn simulate_trajectories(
-    current_features: Vec<f64>,     # 12 features
-    transition_deltas: Vec<Vec<f64>>, // sampled delta pool
-    bounds_lo: Vec<f64>,
-    bounds_hi: Vec<f64>,
-    n_simulations: usize,
-    n_steps: usize,
-    seed: u64,
-) -> PyResult<Vec<Vec<f64>>>        # N × 12 projected features
+```
+mc_simulator/
+├── Cargo.toml           # deps: pyo3, rayon, rand, ndarray
+├── pyproject.toml       # maturin build config
+└── src/
+    └── lib.rs           # SimConfig, simulate_trajectories(), Python bindings
 ```
 
-Python usage:
-```python
-from mc_simulator import simulate_trajectories
-projected = simulate_trajectories(
-    current_features=[2.0, 45.0, 12, ...],
-    transition_deltas=delta_pool.tolist(),
-    bounds_lo=[0.0, 0.0, 0, ...],
-    bounds_hi=[7.0, 180.0, 9999, ...],
-    n_simulations=10_000,
-    n_steps=3,
-    seed=42,
-)  # returns in ~2ms vs ~200ms in Python
+Build:
+```bash
+cd mc_simulator && maturin develop --release
 ```
 
----
+Python fallback (`MonteCarloSimulator` in `temporal_builder.py`) is active until Rust build completes.
 
-### Task 5.2 — DL XAI: Integrated Gradients + Captum
+### Task 5.2 — DL XAI: Integrated Gradients + Captum ✅ DONE
 **File:** `backend/app/explainers/dl_explainer.py`
-**Status:** Pending
 
-> Captum-based explainer for LSTM model. Provides:
-> - `integrated_gradients(sequence)` → per-timestep × per-feature attributions
-> - `temporal_attention_summary(sequence)` → which weeks matter most
-> - Cross-validate against DeepSHAP values for consistency
+- `IntegratedGradients` and `LayerIntegratedGradients` via Captum
+- `explain_temporal(sequence)` → per-timestep × per-feature attributions (6×12 matrix)
+- `temporal_attention_summary(sequence)` → which weeks matter most
+- Cross-validates against DeepSHAP for consistency check
 
-```python
-from captum.attr import IntegratedGradients, LayerIntegratedGradients
-
-class DLExplainer:
-    def __init__(self, lstm_model):
-        self.ig = IntegratedGradients(lstm_model)
-
-    def explain_temporal(self, input_sequence, target=1):
-        attrs = self.ig.attribute(input_sequence, target=target, n_steps=50)
-        # attrs shape: (1, 6, 12) → per-timestep per-feature importance
-        return {
-            "temporal_attributions": attrs,  # 6×12 matrix
-            "week_importance": attrs.abs().sum(dim=-1),  # per-week total
-            "feature_importance": attrs.abs().sum(dim=1), # per-feature total
-        }
-```
-
----
-
-### Task 5.3 — Human-in-the-Loop Feedback
+### Task 5.3 — Human-in-the-Loop Feedback ✅ DONE
 **File:** `backend/app/tracker/feedback_store.py`
 
-> `POST /feedback`: learner_id, explanation_id, rating (1-5), followed_recommendation, correction.
-> `GET /feedback/stats`: aggregate follow rate + avg rating per feature.
-> Feedback data feeds into MLOps concept drift detection (Task M.3).
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+- `POST /feedback` — rating, follow flag, feature correction
+- `GET  /feedback/stats` — aggregate stats for concept drift detection
 
 ---
 
-## Phase 6 — SDK + Docker (Hours 20–23)
+## Phase 6 — SDK + Docker ✅ DONE
 
----
+### Task 6.1 — XAI SDK Package ✅ DONE
+**Path:** `backend/sdk/`
 
-### Task 6.1 — XAI SDK Package
-**File:** `backend/sdk/xai_sdk/`
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-Copilot prompt:
-> "Create installable Python package xai-learner-sdk with:
-> XAIClient class wrapping all API calls (predict, explain, counterfactual, whatif).
-> Convenience methods: explain_learner(features_dict), get_actions(features_dict).
-> pyproject.toml with version 0.1.0. README with quickstart example."
-
-```python
-# Expected SDK usage (after pip install xai-learner-sdk)
-from xai_sdk import XAIClient
-
-client = XAIClient(base_url="https://your-deployment.com")
-explanation = client.explain_learner({
-    "login_frequency_weekly": 2.0,
-    "quiz_completion_rate": 0.35,
-    # ...
-})
-print(explanation.top_action)
-# → "Complete 3 more quizzes this week → estimated 34% risk reduction"
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-> pip-installable `xai-learner-sdk` with XAIClient wrapping all API calls.
+```bash
+pip install -e backend/sdk
+```
 
 ```python
 from xai_sdk import XAIClient
+
 client = XAIClient(base_url="http://localhost:8000")
-explanation = client.explain_learner({
-    "login_frequency_weekly": 2.0,
-    "quiz_completion_rate": 0.35,
-    ...
-})
+result = client.predict(features)
+explanation = client.explain(features, learner_id="learner_042")
+actions = client.counterfactual(features)
+history = client.history("learner_042")
 print(explanation.top_action)
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+```
+
+### Task 6.2 — Docker ✅ DONE
+**Files:** `Dockerfile`, `Dockerfile.backend` (symlink/alias), `docker-compose.yml`
+
+```bash
+docker-compose up
+# Backend: http://localhost:8000
+# MLflow:  http://localhost:5000
 ```
 
 ---
 
-### Task 6.2 — Docker Setup
-**Files:** `Dockerfile.backend`, `docker-compose.yml`
+## Verification Checklist
 
-Copilot prompt:
-> "Create multi-stage Dockerfile for FastAPI backend (python:3.11-slim).
-> docker-compose.yml for backend services with health checks.
-> Backend env vars: MODEL_PATH, DB_URL, GROQ_API_KEY."
-
----
-
-## Final Hour — Testing + Polish
-
-### Task 7.1 — Integration Tests
-```python
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-# pytest tests/test_pipeline.py
-def test_full_pipeline_high_risk_learner():
-    """Test complete P→E→D→P flow for a high-risk learner."""
-=======
-def test_full_pipeline():
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-def test_full_pipeline():
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-def test_full_pipeline():
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-    features = {
-        "login_frequency_weekly": 1.0,
-        "quiz_completion_rate": 0.2,
-        "assignment_submission_rate": 0.3,
-        "days_since_last_activity": 12,
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        # ... all features
-    }
-    # 1. Prediction
-    pred = client.post("/predict", json=features).json()
-    assert pred["risk_label"] == "HIGH"
-
-    # 2. Explanation
-    exp = client.post("/explain", json={"features": features}).json()
-    assert len(exp["shap_values"]) == 12
-    assert exp["trust_score"]["trust_score"] > 0.0
-    assert exp["anchor_rule"] != ""
-
-    # 3. Counterfactual
-    cf = client.post("/counterfactual", json={"features": features}).json()
-    assert len(cf["actions"]) >= 1
-    assert cf["actions"][0]["estimated_impact"] > 0
-
-    # 4. Consistency stored
-    history = client.get(f"/history/test_learner").json()
-    assert len(history) >= 1
 ```
-
-### Task 7.2 — Checklist Verification
+✅ POST /predict returns risk_score + uncertainty (GBM and LSTM)
+✅ POST /explain returns shap_values, interactions, anchor_rule, prototypes,
+         counterfactual, causal_annotations, trust_score, uncertainty, explanation_drift, narratives
+✅ POST /explain?model=lstm returns temporal DeepSHAP attributions
+✅ POST /whatif uses TreeSHAP (verified < 50ms latency)
+✅ POST /counterfactual returns ranked actions — no hard-coding
+✅ POST /simulate returns MC forward projection with outcome distribution
+✅ GET  /history/{id} returns timeline + drift flags (SQLite-backed)
+✅ GET  /mlops/health returns model_version + drift_status + prediction_count
+✅ GET  /mlops/drift-report returns Evidently JSON report
+✅ GET  /mlops/metrics returns training AUC/F1/Brier from training_summary.json
+✅ POST /mlops/retrain triggers full retraining pipeline
+✅ POST /mlops/reload hot-swaps live model atomically
+✅ POST /events ingests implicit interaction events
+✅ POST /feedback accepts explicit learner/instructor feedback
+✅ GET  /feedback/stats returns aggregate follow rates + corrected features
+✅ POST /auth/register + POST /auth/token (JWT)
+✅ GET  /explain/me authenticated student self-service
+✅ MLflow UI accessible at :5000
+✅ SDK installable: pip install -e backend/sdk
+✅ Docker: docker-compose up works
+✅ GET  /health returns 200 with GPU info
 ```
-□ POST /predict returns PredictionResult with uncertainty
-□ POST /explain returns all 3 explanation levels (feature, concept, prediction)
-□ POST /explain returns stability_score and trust_score
-□ POST /whatif uses actual model.predict_proba (verified in test)
-□ POST /counterfactual returns human-readable actions, no hard-coding
-□ GET /history/{id} returns top-3 timeline with drift flags
-□ Docker: docker-compose up serves backend services
-□ GET /health returns 200
-□ SDK installable: pip install -e backend/sdk
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-        ...
-    }
-    pred = client.post("/predict", json=features).json()
-    assert pred["risk_label"] == "HIGH"
-    assert "uncertainty" in pred
-
-    exp = client.post("/explain", json={"features": features}).json()
-    assert len(exp["shap_values"]) == 12
-    assert exp["trust"]["trust_score"] > 0.0
-    assert len(exp["interactions"]) > 0
-    assert exp["anchor_rule"] != ""
-    assert len(exp["prototypes"]) > 0
-
-    cf = client.post("/counterfactual", json={"features": features}).json()
-    assert len(cf["actions"]) >= 1
-    assert cf["actions"][0]["estimated_impact"] > 0
-```
-
-### Task 7.2 — Checklist
-```
-□ POST /predict returns risk_score + uncertainty (both GBM and LSTM)
-□ POST /explain returns shap_values, interactions, anchor_rule, prototypes, actions, causal, trust, narratives
-□ POST /explain?model=lstm returns temporal DeepSHAP attributions
-□ POST /whatif uses TreeSHAP (verified <50ms latency)
-□ POST /counterfactual returns actions — no hard-coding
-□ POST /simulate returns MC forward projection with outcome distribution
-□ GET /history/{id} returns timeline + drift flags
-□ GET /mlops/health returns model version + drift status
-□ GET /mlops/drift-report returns Evidently report
-□ MLflow UI accessible at :5000
-□ Docker: docker-compose up works
-□ GET /health returns 200
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-```
-
----
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-## Pitch Deck Structure (Final 30 mins)
-
-1. **Problem** — Black-box learning platforms, no trust, no action
-2. **Flow** — Prediction → Explanation → Diagnosis → Prescription
-3. **Architecture** — Model + 4-layer XAI stack diagram
-4. **Novel Contributions** — FastSHAP (real-time), Archipelago (interactions), CEM (contrastive), Prototype (relatable)
-5. **Demo** — High-risk learner → full explanation → What-If → counterfactual actions
-6. **Trust Score** — Fidelity + Stability + Completeness = auditable
-7. **Causal Layer** — Distinguishing correlation from causation (brownie)
-8. **SDK** — pip install xai-learner-sdk
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-## Pitch Deck (Final 30 mins)
-
-1. **Problem** — Black-box learning platforms, no trust, no action
-2. **Flow** — Predict → Explain → Prescribe → Monitor (4-layer)
-3. **Architecture** — Dual-model (GBM + LSTM), 8 XAI modules, Rust MC simulator
-4. **Temporal** — LSTM captures trajectory degradation; MC projects plausible futures
-5. **Novel** — Archipelago interactions, Prototype motivation, Causal-weighted actions, Temporal XAI
-6. **Demo** — High-risk learner → SHAP + temporal heatmap → What-If → MC projection → actions
-7. **Trust** — Fidelity + Stability + Completeness = auditable composite
-8. **MLOps** — MLflow tracking + Evidently drift monitoring + model registry + auto-retrain
-9. **Rust** — Monte Carlo simulator in Rust (PyO3) — 100× faster than Python
-10. **SDK** — pip install xai-learner-sdk
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60

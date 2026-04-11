@@ -19,17 +19,20 @@ Endpoints:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
 import pickle
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import numpy as np
 import torch
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -104,6 +107,7 @@ class AppState:
 
 
 state = AppState()
+MLOPS_CONTROL_LOCK = Lock()
 
 
 def _load_pkl(path: Path) -> dict:
@@ -348,6 +352,29 @@ def _require_model():
         raise HTTPException(status_code=503, detail="Model not loaded — run trainer.py first")
     if state.shap_explainer is None:
         raise HTTPException(status_code=503, detail="SHAP explainer not initialised")
+
+
+def require_mlops_operator(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    x_mlops_token: Optional[str] = Header(default=None),
+) -> str:
+    """
+    Guard for control-plane MLOps operations.
+
+    Access is granted if either:
+    - caller is an authenticated admin user, or
+    - caller provides a valid automation token in X-MLOPS-Token header.
+    """
+    if current_user is not None:
+        if current_user.role == "admin":
+            return f"admin:{current_user.username}"
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    automation_token = os.getenv("MLOPS_AUTOMATION_TOKEN", "")
+    if automation_token and x_mlops_token and hmac.compare_digest(x_mlops_token, automation_token):
+        return "automation-token"
+
+    raise HTTPException(status_code=401, detail="Unauthorized MLOps operation")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -733,7 +760,7 @@ def get_learner_events(learner_id: str, limit: int = 100):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @app.post("/mlops/retrain")
-def trigger_retrain(min_events: int = 0):
+def trigger_retrain(min_events: int = 0, operator: str = Depends(require_mlops_operator)):
     """
     Trigger a full implicit+explicit feedback retraining cycle.
     Steps:
@@ -748,33 +775,38 @@ def trigger_retrain(min_events: int = 0):
 
     Query param `min_events`: override the minimum event count guard (default 0 = no guard).
     """
-    if state.event_store is None or state.feedback_store is None:
-        raise HTTPException(503, "Event store or feedback store not initialised")
+    if not MLOPS_CONTROL_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another MLOps control operation is already running")
+    try:
+        if state.event_store is None or state.feedback_store is None:
+            raise HTTPException(503, "Event store or feedback store not initialised")
 
-    if min_events > 0 and not (state.event_store.count() >= min_events):
-        return {
-            "queued":  False,
-            "reason":  f"Only {state.event_store.count()} events recorded (need ≥{min_events})",
-            "n_events": state.event_store.count(),
-        }
+        if min_events > 0 and not (state.event_store.count() >= min_events):
+            return {
+                "queued":  False,
+                "reason":  f"Only {state.event_store.count()} events recorded (need ≥{min_events})",
+                "n_events": state.event_store.count(),
+            }
 
-    pipeline = RetrainPipeline(
-        event_store    = state.event_store,
-        feedback_store = state.feedback_store,
-        data_dir       = DATA_DIR,
-        models_dir     = MODELS_DIR,
-    )
+        pipeline = RetrainPipeline(
+            event_store    = state.event_store,
+            feedback_store = state.feedback_store,
+            data_dir       = DATA_DIR,
+            models_dir     = MODELS_DIR,
+        )
 
-    log.info("POST /mlops/retrain triggered")
-    result = pipeline.run(trigger="api")
-    if result.success:
-        uploaded = upload_models(MODELS_DIR)
-        log.info("S3: uploaded %d artifact(s) after retrain", len(uploaded))
-    return result.to_dict()
+        log.info("POST /mlops/retrain triggered by %s", operator)
+        result = pipeline.run(trigger="api")
+        if result.success:
+            uploaded = upload_models(MODELS_DIR)
+            log.info("S3: uploaded %d artifact(s) after retrain", len(uploaded))
+        return result.to_dict()
+    finally:
+        MLOPS_CONTROL_LOCK.release()
 
 
 @app.post("/mlops/reload")
-def trigger_hot_reload():
+def trigger_hot_reload(operator: str = Depends(require_mlops_operator)):
     """
     Hot-reload models and all explainers from disk into the running process.
     Call this after POST /mlops/retrain returns success=true.
@@ -783,11 +815,16 @@ def trigger_hot_reload():
     re-initialise successfully. On failure, the current production model
     stays live and the error is returned.
     """
-    log.info("POST /mlops/reload triggered")
-    result = hot_reload(state, DATA_DIR, MODELS_DIR, DEVICE)
-    if not result.success:
-        raise HTTPException(500, detail=result.to_dict())
-    return result.to_dict()
+    if not MLOPS_CONTROL_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another MLOps control operation is already running")
+    try:
+        log.info("POST /mlops/reload triggered by %s", operator)
+        result = hot_reload(state, DATA_DIR, MODELS_DIR, DEVICE)
+        if not result.success:
+            raise HTTPException(500, detail=result.to_dict())
+        return result.to_dict()
+    finally:
+        MLOPS_CONTROL_LOCK.release()
 
 
 class FeedbackRequest(BaseModel):

@@ -1,0 +1,28 @@
+{
+  "latent_dim": 3,
+  "dropout": 0.2,
+  "n_input": 20,
+  "feature_names": [
+    "dashboard_visits_weekly",
+    "avg_explanation_time_sec",
+    "whatif_interaction_count",
+    "action_view_rate",
+    "action_dismiss_rate",
+    "scroll_depth_avg",
+    "time_to_first_action_avg",
+    "prototype_click_rate",
+    "explanation_revisit_rate",
+    "resource_download_count",
+    "unique_features_explored",
+    "session_count",
+    "session_duration_avg_sec",
+    "engagement_consistency",
+    "days_active_on_platform",
+    "avg_explanation_rating",
+    "recommendation_follow_rate",
+    "correction_count",
+    "feedback_frequency",
+    "latest_rating_trend"
+  ],
+  "is_fitted": true
+}
