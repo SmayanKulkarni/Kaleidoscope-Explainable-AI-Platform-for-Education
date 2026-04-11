@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -63,6 +63,7 @@ from backend.app.narrator.llm_narrator import LLMNarrator
 from backend.app.tracker.consistency_store import ExplanationStore
 from backend.app.tracker.drift_detector import ExplanationDriftDetector
 from backend.app.model.temporal_builder import MonteCarloSimulator
+from backend.app.recommender.ranker_explainer import RankerExplainer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
@@ -107,6 +108,8 @@ class AppState:
     model_version:   str = "unknown"
     canary_gbm_model = None
     canary_fraction: float = 0.0
+    student_ranker_explainer: Optional[RankerExplainer] = None
+    instructor_ranker_explainer: Optional[RankerExplainer] = None
 
 
 state = AppState()
@@ -290,6 +293,26 @@ async def lifespan(app: FastAPI):
         log.info("MonteCarloSimulator loaded — %d transition rows", len(transitions.get("deltas", [])))
     else:
         log.warning("transitions.pkl not found — /simulate will return empty distributions")
+
+    # ── Recommendation Rankers ──
+    _reco_models_dir = MODELS_DIR / "recommenders"
+    for _pkl_name, _attr in [
+        ("student_ranker.pkl",    "student_ranker_explainer"),
+        ("instructor_ranker.pkl", "instructor_ranker_explainer"),
+    ]:
+        _rp = _reco_models_dir / _pkl_name
+        if _rp.exists():
+            with open(_rp, "rb") as _f:
+                _art = pickle.load(_f)
+            setattr(state, _attr, RankerExplainer(
+                model           = _art["model"],
+                feature_columns = _art["feature_columns"],
+                encoder_maps    = _art["metadata"]["encoder_maps"],
+                causal_annotator= state.causal_annotator,
+            ))
+            log.info("%s loaded  features=%d", _attr, len(_art["feature_columns"]))
+        else:
+            log.warning("%s not found — run train_recommenders.py", _pkl_name)
 
     log.info("Startup complete — device=%s", DEVICE)
     yield
@@ -1137,3 +1160,217 @@ def my_history(
         "history":     full_history,
         "drift_flags": drift_flags,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Endpoints — Recommendation Engine
+#
+# Explainability matrix vs dropout engine:
+#   ✅ TreeSHAP (pred_contrib)   ✅ WhatIf    ✅ Anchor rule
+#   ✅ Feature interactions       ✅ Causal annotations
+#   ✅ SHAP stability             ✅ Plain-language narration
+#   ❌ DiCE (classifier-only)    ❌ MAPIE (no predict_proba)
+#   ❌ LSTM temporal (not applicable to ranking)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class RecoItem(BaseModel):
+    """A single candidate item to score. item_id is echoed back in results."""
+    item_id:  str = ""
+    features: Dict[str, Any] = {}   # ranker feature dict for this item
+
+
+class StudentRecoRequest(BaseModel):
+    learner_id:   str = "anonymous"
+    items:        list[RecoItem]
+    top_k:        int = Field(5, ge=1, le=20)
+    include_shap: bool = True
+
+
+class StudentRecoExplainRequest(BaseModel):
+    learner_id: str = "anonymous"
+    features:   Dict[str, Any]   # combined learner + item features (one row)
+    item_id:    str = ""
+
+
+class StudentRecoWhatIfRequest(BaseModel):
+    learner_id: str = "anonymous"
+    features:   Dict[str, Any]   # combined learner + item features (one row)
+    overrides:  Dict[str, Any]   # feature values to change
+
+
+class InstructorRecoRequest(BaseModel):
+    instructor_id: str = "anonymous"
+    items:         list[RecoItem]
+    top_k:         int = Field(5, ge=1, le=20)
+    include_shap:  bool = True
+
+
+class InstructorRecoExplainRequest(BaseModel):
+    instructor_id: str = "anonymous"
+    features:      Dict[str, Any]
+    item_id:       str = ""
+
+
+class InstructorRecoWhatIfRequest(BaseModel):
+    instructor_id: str = "anonymous"
+    features:      Dict[str, Any]
+    overrides:     Dict[str, Any]
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _require_student_ranker():
+    if state.student_ranker_explainer is None:
+        raise HTTPException(503, "Student ranker not loaded — run train_recommenders.py")
+
+
+def _require_instructor_ranker():
+    if state.instructor_ranker_explainer is None:
+        raise HTTPException(503, "Instructor ranker not loaded — run train_recommenders.py")
+
+
+def _merge_item(item: RecoItem) -> Dict[str, Any]:
+    """Merge item_id into feature dict so the ranker sees a single row."""
+    return {"item_id": item.item_id, **item.features}
+
+
+# ── /recommend/health ─────────────────────────────────────────────────────────
+
+@app.get("/recommend/health")
+def recommend_health():
+    """Status of both recommendation rankers."""
+    return {
+        "student_ranker":    (
+            state.student_ranker_explainer.health()
+            if state.student_ranker_explainer else {"loaded": False}
+        ),
+        "instructor_ranker": (
+            state.instructor_ranker_explainer.health()
+            if state.instructor_ranker_explainer else {"loaded": False}
+        ),
+    }
+
+
+# ── /recommend/student ────────────────────────────────────────────────────────
+
+@app.post("/recommend/student")
+def recommend_student(req: StudentRecoRequest):
+    """
+    Score and rank candidate resources for a student.
+
+    Each item in `items` carries its own feature dict.  The ranker scores all
+    items and returns the top-K with SHAP-based explanations.
+
+    Explainability returned per item:
+      - shap_values     : feature → score contribution
+      - top_features    : top-3 features by |shap|
+    """
+    _require_student_ranker()
+    if not req.items:
+        raise HTTPException(422, "Provide at least one item to score")
+
+    rows = [_merge_item(it) for it in req.items]
+    scored = state.student_ranker_explainer.score_items(
+        items=rows,
+        top_k=req.top_k,
+        include_shap=req.include_shap,
+    )
+    return {
+        "learner_id":      req.learner_id,
+        "top_k":           req.top_k,
+        "recommendations": [s.to_dict() for s in scored],
+    }
+
+
+@app.post("/recommend/student/explain")
+def recommend_student_explain(req: StudentRecoExplainRequest):
+    """
+    Full XAI explanation for why an item would be recommended to a student.
+
+    Explainability:
+      - shap_values          : per-feature score contribution
+      - top_features         : top-5 by |shap|
+      - anchor_rule          : IF-THEN rule from top features + actual values
+      - feature_interactions : top-3 feature pairs by |shap_i × shap_j|
+      - causal_annotations   : causal / correlational / confounder per feature
+      - shap_stability       : 0-1 confidence that top features stay stable
+      - plain_language       : one-sentence human-readable reason
+    """
+    _require_student_ranker()
+    explanation = state.student_ranker_explainer.explain(
+        features=req.features,
+        item_id=req.item_id,
+    )
+    return {"learner_id": req.learner_id, **explanation.to_dict()}
+
+
+@app.post("/recommend/student/whatif")
+def recommend_student_whatif(req: StudentRecoWhatIfRequest):
+    """
+    Counterfactual: how does the recommendation score change if feature
+    values are modified?
+
+    Returns:
+      - original_score / modified_score
+      - score_delta + direction ("higher" | "lower" | "unchanged")
+      - shap_delta: which features changed attribution most
+    """
+    _require_student_ranker()
+    result = state.student_ranker_explainer.whatif(
+        features=req.features,
+        overrides=req.overrides,
+    )
+    return {"learner_id": req.learner_id, **result.to_dict()}
+
+
+# ── /recommend/instructor ─────────────────────────────────────────────────────
+
+@app.post("/recommend/instructor")
+def recommend_instructor(req: InstructorRecoRequest):
+    """
+    Score and rank candidate learner-intervention assignments for an instructor.
+    Same explainability surface as the student endpoint.
+    """
+    _require_instructor_ranker()
+    if not req.items:
+        raise HTTPException(422, "Provide at least one item to score")
+
+    rows = [_merge_item(it) for it in req.items]
+    scored = state.instructor_ranker_explainer.score_items(
+        items=rows,
+        top_k=req.top_k,
+        include_shap=req.include_shap,
+    )
+    return {
+        "instructor_id":   req.instructor_id,
+        "top_k":           req.top_k,
+        "recommendations": [s.to_dict() for s in scored],
+    }
+
+
+@app.post("/recommend/instructor/explain")
+def recommend_instructor_explain(req: InstructorRecoExplainRequest):
+    """
+    Full XAI explanation for why an intervention/resource was assigned to a
+    learner cohort.  Same explainability stack as the student endpoint.
+    """
+    _require_instructor_ranker()
+    explanation = state.instructor_ranker_explainer.explain(
+        features=req.features,
+        item_id=req.item_id,
+    )
+    return {"instructor_id": req.instructor_id, **explanation.to_dict()}
+
+
+@app.post("/recommend/instructor/whatif")
+def recommend_instructor_whatif(req: InstructorRecoWhatIfRequest):
+    """
+    Counterfactual for instructor recommendations: how does assignment priority
+    change if feature values are adjusted?
+    """
+    _require_instructor_ranker()
+    result = state.instructor_ranker_explainer.whatif(
+        features=req.features,
+        overrides=req.overrides,
+    )
+    return {"instructor_id": req.instructor_id, **result.to_dict()}

@@ -439,3 +439,44 @@ _simulations (default 1000, max 10_000).
 - **Human-in-the-loop:** Training and precompute were executed in `conda` env `astro`.
 - **Dependencies/Impacts:** Recommendation model artifacts and precomputed serving tables now exist for API integration; added `lightgbm` dependency to requirements.
 
+---
+
+### [2026-04-11] Cascade — Recommendation Engine Endpoints + Explainability Layer
+
+**Files Created:**
+- `backend/app/recommender/ranker_explainer.py` — `RankerExplainer` service class wrapping LGBMRanker with full XAI suite; result dataclasses `ScoredItem`, `RecommendationExplanation`, `WhatIfResult`.
+
+**Files Modified:**
+- `backend/app/main.py` — Added `Any, Dict` to typing imports; imported `RankerExplainer`; added `student_ranker_explainer` + `instructor_ranker_explainer` to `AppState`; added ranker loading loop in lifespan (reads `models/recommenders/student_ranker.pkl` + `instructor_ranker.pkl`); appended 7 new recommendation endpoints.
+
+**New Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/recommend/health` | Ranker load status + feature count |
+| POST | `/recommend/student` | Score + rank candidate items for a student, top-K with SHAP |
+| POST | `/recommend/student/explain` | Full XAI: SHAP, anchor rule, interactions, causal, stability |
+| POST | `/recommend/student/whatif` | Score delta under feature overrides |
+| POST | `/recommend/instructor` | Score + rank interventions for instructor |
+| POST | `/recommend/instructor/explain` | Full XAI for instructor assignments |
+| POST | `/recommend/instructor/whatif` | Score delta for instructor assignments |
+
+**Explainability Layer — What applies vs dropout engine:**
+| Interface | Dropout | Recommender | Reason |
+|-----------|---------|-------------|--------|
+| TreeSHAP | ✅ | ✅ | LGBMRanker `pred_contrib=True` native |
+| WhatIf | ✅ | ✅ | Re-score with overrides |
+| Anchor rule | ✅ | ✅ | IF-THEN from top SHAP + actual values |
+| Feature interactions | ✅ | ✅ | `\|shap_i × shap_j\|` pairs |
+| Causal annotations | ✅ | ✅ | Reuses `CausalAnnotator` when features overlap |
+| SHAP stability | ✅ | ✅ | Noise-perturbation rank-variance (0–1) |
+| Plain-language | ✅ | ✅ | Auto-generated from top SHAP features |
+| DiCE counterfactual | ✅ | ❌ | DiCE requires binary classifier |
+| MAPIE uncertainty | ✅ | ❌ | Requires `predict_proba`; not on ranker |
+| LSTM temporal | ✅ | ❌ | Recommendation features are not sequential |
+
+**Key design decisions:**
+- `RankerExplainer` is a clean standalone service — accepts the artifact dict schema from `train_recommenders.py` directly (model + feature_columns + metadata.encoder_maps).
+- SHAP stability uses Gaussian perturbation + rank-variance to produce a `[0,1]` confidence score, mirroring `TrustScorer` philosophy.
+- Graceful degradation: all endpoints return HTTP 503 if the ranker wasn't loaded, never panic-crash.
+- Causal annotator is passed in from the dropout engine but is optional — unknown label used as fallback when features don't overlap.
+
