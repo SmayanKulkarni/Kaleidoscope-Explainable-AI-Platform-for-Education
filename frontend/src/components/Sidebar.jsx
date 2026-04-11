@@ -1,22 +1,37 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
+import { recommendHealth } from '../api/recommend';
 
 export default function Sidebar() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
+  const { data: healthData } = useQuery({
+    queryKey: ['recommend-health'],
+    queryFn: recommendHealth,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const modelLoaded = healthData?.loaded ?? false;
+
   if (!user) return null;
 
   const studentLinks = [
     { to: '/student', icon: 'dashboard', label: 'Overview' },
     { to: '/action-plan', icon: 'assignment_turned_in', label: 'Action Plan' },
+    { to: '/xai/student', icon: 'psychology', label: 'XAI Explain' },
+    { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
     { to: '#history', icon: 'history', label: 'History' },
   ];
 
   const instructorLinks = [
     { to: '/instructor', icon: 'dashboard', label: 'Overview' },
     { to: '/what-if', icon: 'science', label: 'What-If Explorer' },
+    { to: '/xai/instructor', icon: 'groups', label: 'Interventions' },
+    { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
     { to: '#history', icon: 'history', label: 'History' },
   ];
 
@@ -63,7 +78,17 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="px-6 py-8">
+      <div className="px-6 py-4">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-container text-xs font-label">
+          <span className={`w-2 h-2 rounded-full ${modelLoaded ? 'bg-green-500' : 'bg-amber-400'}`} />
+          <span className="text-slate-500">XAI Model</span>
+          <span className={`ml-auto font-bold ${modelLoaded ? 'text-green-600' : 'text-amber-500'}`}>
+            {modelLoaded ? 'Ready' : 'Offline'}
+          </span>
+        </div>
+      </div>
+
+      <div className="px-6 py-4">
         <button className="w-full py-3 bg-gradient-to-r from-primary to-primary-container text-on-primary rounded-xl font-bold text-sm shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2">
           {user.role === 'student' ? <span className="material-symbols-outlined text-sm">bolt</span> : null}
           Get AI Help

@@ -13,8 +13,11 @@ AnchorsExplainer(model, X_train, feature_names)
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -64,17 +67,60 @@ class AnchorsExplainer:
         """
         self.feature_names = feature_names
         self.threshold     = threshold
+        self._predict_fn   = predict_fn
 
+        disc_perc = (25, 50, 75) if discretizer == "quartile" else (10, 20, 30, 40, 50, 60, 70, 80, 90)
+
+        # ── Disk cache ────────────────────────────────────────────────────────
+        # AnchorTabular.fit() is deterministic given X_train + discretizer.
+        # Cache the fitted object to skip the expensive refit on restarts.
+        _cache_key = hashlib.md5(
+            f"{X_train.shape}{float(X_train.mean()):.8f}{discretizer}{'|'.join(feature_names)}".encode()
+        ).hexdigest()[:16]
+        _cache_dir  = Path("data")
+        _cache_path = _cache_dir / f"anchors_fitted_{_cache_key}.pkl"
+
+        if _cache_path.exists():
+            try:
+                cached = pickle.loads(_cache_path.read_bytes())
+                # Restore fitted explainer and rewire the predictor (not serialisable)
+                self.explainer = cached
+                self.explainer.predictor = predict_fn
+                log.info("AnchorsExplainer: loaded fitted state from cache (%s)", _cache_path.name)
+            except Exception as _e:
+                log.warning("AnchorsExplainer: cache load failed (%s) — refitting", _e)
+                self._fit_and_cache(predict_fn, feature_names, X_train, disc_perc, _cache_dir, _cache_path)
+        else:
+            self._fit_and_cache(predict_fn, feature_names, X_train, disc_perc, _cache_dir, _cache_path)
+
+        log.info("AnchorsExplainer initialised  discretizer=%s  threshold=%.2f",
+                 discretizer, threshold)
+
+    def _fit_and_cache(
+        self,
+        predict_fn: Callable,
+        feature_names: list[str],
+        X_train,
+        disc_perc: tuple,
+        cache_dir: Path,
+        cache_path: Path,
+    ) -> None:
         self.explainer = AnchorTabular(
             predictor=predict_fn,
             feature_names=feature_names,
             seed=42,
         )
-        self.explainer.fit(X_train, disc_perc=(25, 50, 75) if discretizer == "quartile"
-                           else (10, 20, 30, 40, 50, 60, 70, 80, 90))
-
-        log.info("AnchorsExplainer initialised  discretizer=%s  threshold=%.2f",
-                 discretizer, threshold)
+        self.explainer.fit(X_train, disc_perc=disc_perc)
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            # Temporarily remove the non-picklable predictor before saving
+            _pred = self.explainer.predictor
+            self.explainer.predictor = None
+            cache_path.write_bytes(pickle.dumps(self.explainer))
+            self.explainer.predictor = _pred
+            log.info("AnchorsExplainer: cache written → %s", cache_path.name)
+        except Exception as _e:
+            log.warning("AnchorsExplainer: could not write cache (%s)", _e)
 
     def _predict_label(self, features_dict: dict) -> str:
         """Human label for the predicted class."""

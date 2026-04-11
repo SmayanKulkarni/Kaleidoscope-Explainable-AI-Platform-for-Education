@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loginMock, signupMock } from '../services/authService';
+import { login as apiLogin, register as apiRegister, getMe } from '../api/auth';
 
 const AuthContext = createContext(null);
 
@@ -8,30 +8,36 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restore mock session
-    const stored = localStorage.getItem('ll_mock_user');
-    if (stored) {
-      setUser(JSON.parse(stored));
-    }
-    setLoading(false);
+    const token = localStorage.getItem('ll_token');
+    if (!token) { setLoading(false); return; }
+    getMe()
+      .then((me) => setUser(me))
+      .catch(() => {
+        localStorage.removeItem('ll_token');
+        localStorage.removeItem('ll_user');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  const login = async (email, password) => {
-    const u = await loginMock(email, password);
-    localStorage.setItem('ll_mock_user', JSON.stringify(u));
-    setUser(u);
-    return u;
+  const login = async (username, password) => {
+    const tokenData = await apiLogin(username, password);
+    localStorage.setItem('ll_token', tokenData.access_token);
+    if (tokenData.learner_id) localStorage.setItem('ll_learner_id', tokenData.learner_id);
+    const me = await getMe();
+    localStorage.setItem('ll_user', JSON.stringify(me));
+    setUser(me);
+    return { ...me, role: tokenData.role };
   };
 
-  const signup = async (name, email, password, role) => {
-    const u = await signupMock(name, email, password, role);
-    localStorage.setItem('ll_mock_user', JSON.stringify(u));
-    setUser(u);
-    return u;
+  const signup = async (body) => {
+    await apiRegister(body);
+    return login(body.username, body.password);
   };
 
   const logout = () => {
-    localStorage.removeItem('ll_mock_user');
+    localStorage.removeItem('ll_token');
+    localStorage.removeItem('ll_user');
+    localStorage.removeItem('ll_learner_id');
     setUser(null);
   };
 

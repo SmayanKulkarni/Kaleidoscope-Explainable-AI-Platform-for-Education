@@ -19,12 +19,14 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
 import os
 import pickle
 import random
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +114,9 @@ class AppState:
     canary_fraction: float = 0.0
     student_ranker_explainer: Optional[RankerExplainer] = None
     instructor_ranker_explainer: Optional[RankerExplainer] = None
+    # Startup readiness flags
+    core_ready:         bool = False   # /predict and /health available
+    fully_initialized:  bool = False   # all XAI explainers ready
     reco_explanation_store: Optional[RecommendationExplanationStore] = None
     fairness_auditor: Optional[FairnessAuditor] = None
 
@@ -128,26 +133,11 @@ def _load_pkl(path: Path) -> dict:
 DATA_DIR = PROJECT_ROOT / "data"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ── Download model artifacts from S3 (no-op if AWS_S3_BUCKET not set) ──
-    downloaded = download_models(MODELS_DIR)
-    if downloaded:
-        log.info("S3: downloaded %d model artifact(s)", len(downloaded))
+# ──────────────────────────────────────────────────────────────────────────────
+# Startup helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
-    log.info("Loading models from %s …", MODELS_DIR)
-
-    # ── Load training data (needed by explainers) ──
-    train_path = DATA_DIR / "train.pkl"
-    if train_path.exists():
-        blob = _load_pkl(train_path)
-        state.X_train     = blob["X"]
-        state.y_train     = blob["y"]
-        _ids = blob.get("learner_ids")
-        state.learner_ids = np.asarray(_ids, dtype=object) if _ids is not None else None
-        log.info("Training data loaded  X=%s", state.X_train.shape)
-
-    # ── GBM ──
+def _load_gbm() -> None:
     gbm_path = MODELS_DIR / "gbm.pkl"
     if gbm_path.exists():
         blob = _load_pkl(gbm_path)
@@ -158,13 +148,26 @@ async def lifespan(app: FastAPI):
     else:
         log.warning("gbm.pkl not found — run trainer.py first")
 
-    # ── RF ──
+
+def _load_rf() -> None:
     rf_path = MODELS_DIR / "rf.pkl"
     if rf_path.exists():
         state.rf_model = _load_pkl(rf_path)["model"]
         log.info("RF loaded")
 
-    # ── LSTM ──
+
+def _load_train_data() -> None:
+    train_path = DATA_DIR / "train.pkl"
+    if train_path.exists():
+        blob = _load_pkl(train_path)
+        state.X_train     = blob["X"]
+        state.y_train     = blob["y"]
+        _ids = blob.get("learner_ids")
+        state.learner_ids = np.asarray(_ids, dtype=object) if _ids is not None else None
+        log.info("Training data loaded  X=%s", state.X_train.shape)
+
+
+def _load_lstm() -> None:
     lstm_config_path  = MODELS_DIR / "lstm_config.json"
     lstm_weights_path = MODELS_DIR / "lstm.pt"
     if lstm_config_path.exists() and lstm_weights_path.exists():
@@ -183,6 +186,61 @@ async def lifespan(app: FastAPI):
         state.lstm_model = lstm
         log.info("LSTM loaded  val_auc=%.4f", state.lstm_config.get("best_val_auc", 0))
 
+
+def _load_transitions() -> None:
+    transitions_path = DATA_DIR / "temporal" / "transitions.pkl"
+    if transitions_path.exists():
+        with open(transitions_path, "rb") as f:
+            transitions = pickle.load(f)
+        state.mc_simulator = MonteCarloSimulator(transitions)
+        log.info("MonteCarloSimulator loaded — %d transition rows", len(transitions.get("deltas", [])))
+    else:
+        log.warning("transitions.pkl not found — /simulate will return empty distributions")
+
+
+def _load_rankers() -> None:
+    _reco_models_dir = MODELS_DIR / "recommenders"
+    for _pkl_name, _attr in [
+        ("student_ranker.pkl",    "student_ranker_explainer"),
+        ("instructor_ranker.pkl", "instructor_ranker_explainer"),
+    ]:
+        _rp = _reco_models_dir / _pkl_name
+        if _rp.exists():
+            with open(_rp, "rb") as _f:
+                _art = pickle.load(_f)
+            # Note: causal_annotator may be None here if background init hasn't finished;
+            # RankerExplainer accepts None and degrades gracefully.
+            setattr(state, _attr, RankerExplainer(
+                model           = _art["model"],
+                feature_columns = _art["feature_columns"],
+                encoder_maps    = _art["metadata"]["encoder_maps"],
+                causal_annotator= state.causal_annotator,
+            ))
+            log.info("%s loaded  features=%d", _attr, len(_art["feature_columns"]))
+        else:
+            log.warning("%s not found — run train_recommenders.py", _pkl_name)
+
+
+def _init_heavy_explainers(X_background) -> None:
+    """
+    Initialise the slow explainers (DiCE, Anchors, CausalAnnotator) in a
+    background thread so the server can start accepting requests immediately.
+    Results are written directly to `state`; Python's GIL makes the reference
+    assignment atomic and safe.
+    """
+    if state.gbm_model is None or state.X_train is None:
+        log.warning("_init_heavy_explainers: models not loaded — skipping")
+        return
+
+    log.info("[bg] Starting heavy XAI explainer initialisation …")
+
+    state.dice_explainer = DiCEExplainer(
+        model         = state.gbm_model,
+        X_train       = state.X_train,
+        feature_names = state.feature_names,
+        y_train       = state.y_train,
+    )
+    log.info("[bg] DiCEExplainer initialised")
     # ── Background sequences for DeepSHAP (LSTM) ──
     _X_background = None
     _snapshots_path = DATA_DIR / "temporal" / "snapshots.pkl"
@@ -224,9 +282,15 @@ async def lifespan(app: FastAPI):
         except Exception as _dice_err:
             log.warning("DiCEExplainer failed to initialise (dice_ml/pandas compat): %s", _dice_err)
 
-        def _predict_fn(X):
-            return (state.gbm_model.predict_proba(X)[:, 1] >= 0.5).astype(int)
+    def _predict_fn(X):
+        return (state.gbm_model.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
+    state.anchors_explainer = AnchorsExplainer(
+        predict_fn    = _predict_fn,
+        X_train       = state.X_train,
+        feature_names = state.feature_names,
+    )
+    log.info("[bg] AnchorsExplainer initialised")
         try:
             state.anchors_explainer = AnchorsExplainer(
                 predict_fn    = _predict_fn,
@@ -237,6 +301,13 @@ async def lifespan(app: FastAPI):
         except Exception as _anchors_err:
             log.warning("AnchorsExplainer failed to initialise: %s", _anchors_err)
 
+    state.prototype_explainer = PrototypeExplainer(
+        X_train       = state.X_train,
+        y_train       = state.y_train,
+        learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
+        feature_names = state.feature_names,
+    )
+    log.info("[bg] PrototypeExplainer initialised")
         try:
             state.prototype_explainer = PrototypeExplainer(
                 X_train       = state.X_train,
@@ -248,6 +319,12 @@ async def lifespan(app: FastAPI):
         except Exception as _proto_err:
             log.warning("PrototypeExplainer failed to initialise: %s", _proto_err)
 
+    state.uncertainty_estimator = UncertaintyEstimator(
+        model = state.gbm_model,
+        X_cal = state.X_train,
+        y_cal = state.y_train,
+    )
+    log.info("[bg] UncertaintyEstimator initialised")
         try:
             state.uncertainty_estimator = UncertaintyEstimator(
                 model = state.gbm_model,
@@ -258,6 +335,12 @@ async def lifespan(app: FastAPI):
         except Exception as _unc_err:
             log.warning("UncertaintyEstimator failed to initialise: %s", _unc_err)
 
+    state.causal_annotator = CausalAnnotator(
+        X_train       = state.X_train,
+        y_train       = state.y_train,
+        feature_names = state.feature_names,
+    )
+    log.info("[bg] CausalAnnotator initialised (DoWhy / cache)")
         try:
             state.causal_annotator = CausalAnnotator(
                 X_train       = state.X_train,
@@ -268,6 +351,12 @@ async def lifespan(app: FastAPI):
         except Exception as _causal_err:
             log.warning("CausalAnnotator failed to initialise: %s", _causal_err)
 
+    state.action_ranker = ActionRanker(
+        feature_names    = state.feature_names,
+        X_train          = state.X_train,
+        causal_annotator = state.causal_annotator,
+    )
+    log.info("[bg] ActionRanker initialised")
         try:
             state.action_ranker = ActionRanker(
                 feature_names    = state.feature_names,
@@ -278,35 +367,104 @@ async def lifespan(app: FastAPI):
         except Exception as _ar_err:
             log.warning("ActionRanker failed to initialise: %s", _ar_err)
 
-    state.trust_scorer    = TrustScorer()
-    state.explanation_store = ExplanationStore()
-    state.drift_detector  = ExplanationDriftDetector()
-    state.prediction_logger = PredictionLogger()
-    state.feedback_store = FeedbackStore()
-    log.info("FeedbackStore initialised")
+    import pandas as pd  # noqa: F401 — triggers Evidently's pandas dep lazily
+    state.drift_monitor = DriftMonitor(
+        reference_data = state.X_train,
+        feature_names  = state.feature_names,
+    )
+    log.info("[bg] DriftMonitor initialised")
 
-    state.event_store = EventStore()
-    log.info("EventStore initialised")
+    # Update ranker explainers with the now-available causal_annotator (re-load to wire it in)
+    if state.causal_annotator is not None:
+        _load_rankers()
 
-    # ── Phase 2A: Drift Monitor ──
-    if state.X_train is not None:
-        import pandas as pd
-        state.drift_monitor = DriftMonitor(
-            reference_data = state.X_train,
+    # LSTM background sequences for DeepSHAP
+    if state.lstm_model is not None and X_background is None:
+        _snapshots_path = DATA_DIR / "temporal" / "snapshots.pkl"
+        if _snapshots_path.exists():
+            try:
+                _bg_seqs, _, _ = build_sequences(_snapshots_path)
+                _X_bg = _bg_seqs[:200]
+                state.shap_explainer.deep_explainer  # re-init only if attribute exists
+                log.info("[bg] LSTM background sequences loaded  shape=%s", _X_bg.shape)
+            except Exception as _e:
+                log.warning("[bg] Failed to load LSTM background sequences: %s", _e)
+
+    state.fully_initialized = True
+    log.info("[bg] All XAI explainers ready — fully_initialized=True")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Download model artifacts from S3 (no-op if AWS_S3_BUCKET not set) ──
+    downloaded = download_models(MODELS_DIR)
+    if downloaded:
+        log.info("S3: downloaded %d model artifact(s)", len(downloaded))
+
+    log.info("Loading models from %s …", MODELS_DIR)
+
+    # ── Phase 1: Parallel I/O — load all pkl/pt files concurrently ──────────
+    with ThreadPoolExecutor(max_workers=6, thread_name_prefix="startup") as _ex:
+        _futures = {
+            _ex.submit(_load_train_data): "train",
+            _ex.submit(_load_gbm):        "gbm",
+            _ex.submit(_load_rf):         "rf",
+            _ex.submit(_load_lstm):       "lstm",
+            _ex.submit(_load_transitions): "transitions",
+            _ex.submit(_load_rankers):    "rankers",
+        }
+        for _f in _futures:
+            try:
+                _f.result()
+            except Exception as _e:
+                log.error("Startup I/O error [%s]: %s", _futures[_f], _e)
+
+    # ── Phase 1 init: fast explainers (depend on gbm + lstm being loaded) ──
+    # LSTM background sequences (build_sequences is slow) are deferred to the
+    # background thread; SHAPExplainer starts without them — DeepSHAP is a
+    # nice-to-have and not required for /predict or /explain.
+    if state.gbm_model is not None and state.feature_names:
+        state.shap_explainer = SHAPExplainer(
+            gbm_model     = state.gbm_model,
+            feature_names = state.feature_names,
+            lstm_model    = state.lstm_model,
+            X_background  = None,
+        )
+        log.info("SHAPExplainer initialised")
+
+        state.archipelago_explainer = ArchipelagoExplainer(
+            tree_explainer = state.shap_explainer.tree_explainer,
             feature_names  = state.feature_names,
         )
-        log.info("DriftMonitor initialised")
+        log.info("ArchipelagoExplainer initialised")
 
-    # ── Auth DB ──
+    # ── Phase 1 stores: lightweight, no ML dependency ────────────────────────
+    state.trust_scorer      = TrustScorer()
+    state.explanation_store = ExplanationStore()
+    state.drift_detector    = ExplanationDriftDetector()
+    state.prediction_logger = PredictionLogger()
+    state.feedback_store    = FeedbackStore()
+    state.event_store       = EventStore()
+    log.info("Stores initialised")
+
     init_auth_db()
     log.info("Auth DB initialised (data/auth.db)")
 
-    # ── Phase 3: LLM Narrator ──
     state.llm_narrator = LLMNarrator()
     if state.llm_narrator.available:
         log.info("LLMNarrator initialised  model=%s", state.llm_narrator.model)
     else:
         log.warning("LLMNarrator disabled — set GROQ_API_KEY to enable narration")
+
+    # ── Core ready: /predict and /health available ───────────────────────────
+    state.core_ready = True
+    log.info("Core ready — device=%s  (XAI explainers initialising in background)", DEVICE)
+
+    # ── Phase 2: Heavy explainers in background thread ───────────────────────
+    # DiCE, Anchors, Prototype, CausalAnnotator, ActionRanker, DriftMonitor
+    # load from disk caches after first run — typically < 5s on subsequent starts.
+    _loop = asyncio.get_event_loop()
+    _bg_future = _loop.run_in_executor(None, _init_heavy_explainers, None)
 
     # ── Monte Carlo Simulator ──
     transitions_path = DATA_DIR / "temporal" / "transitions.pkl"
@@ -392,6 +550,12 @@ async def lifespan(app: FastAPI):
 
     log.info("Startup complete — device=%s", DEVICE)
     yield
+
+    # Wait briefly for background init to finish cleanly on shutdown
+    try:
+        await asyncio.wait_for(_bg_future, timeout=30)
+    except (asyncio.TimeoutError, Exception):
+        pass
     log.info("Shutdown")
 
 
@@ -560,6 +724,8 @@ def health():
         "model_version": state.model_version,
         "gbm_loaded":    state.gbm_model is not None,
         "lstm_loaded":   state.lstm_model is not None,
+        "core_ready":    state.core_ready,
+        "xai_ready":     state.fully_initialized,
         "device":        str(DEVICE),
         "gpu":           gpu_info,
         "timestamp":     datetime.now(timezone.utc).isoformat(),
@@ -1380,8 +1546,11 @@ def causal_graph():
 
 @app.get("/recommend/health")
 def recommend_health():
-    """Status of both recommendation rankers."""
+    """Status of both recommendation rankers (and overall XAI readiness)."""
+    student_ok    = state.student_ranker_explainer is not None
+    instructor_ok = state.instructor_ranker_explainer is not None
     return {
+        "loaded":            student_ok or instructor_ok or state.fully_initialized,
         "student_ranker":    (
             state.student_ranker_explainer.health()
             if state.student_ranker_explainer else {"loaded": False}
@@ -1390,6 +1559,8 @@ def recommend_health():
             state.instructor_ranker_explainer.health()
             if state.instructor_ranker_explainer else {"loaded": False}
         ),
+        "xai_ready":         state.fully_initialized,
+        "core_ready":        state.core_ready,
     }
 
 

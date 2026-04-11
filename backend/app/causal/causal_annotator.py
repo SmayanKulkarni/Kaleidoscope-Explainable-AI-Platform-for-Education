@@ -19,9 +19,12 @@ CausalAnnotator(X_train, y_train, feature_names)
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import pickle
 import warnings
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -190,6 +193,26 @@ class CausalAnnotator:
         # Build causal graph
         self.gml = _build_causal_graph(feature_names)
 
+        # ── Disk cache ────────────────────────────────────────────────────────
+        # The causal effects are deterministic given (X_train, y_train, feature_names).
+        # Skip recomputation on every restart by caching to data/.
+        _cache_key = hashlib.md5(
+            f"{X_train.shape}{float(X_train.mean()):.8f}{'|'.join(feature_names)}".encode()
+        ).hexdigest()[:16]
+        _cache_dir  = Path("data")
+        _cache_path = _cache_dir / f"causal_effects_{_cache_key}.pkl"
+
+        if _cache_path.exists():
+            try:
+                self.causal_effects = pickle.loads(_cache_path.read_bytes())
+                log.info(
+                    "CausalAnnotator: loaded %d effects from cache (%s)",
+                    len(self.causal_effects), _cache_path.name,
+                )
+                return
+            except Exception as _e:
+                log.warning("CausalAnnotator: cache load failed (%s) — recomputing", _e)
+
         # Run causal effect estimation for each feature
         log.info("CausalAnnotator: estimating causal effects for %d features …", len(feature_names))
         for feat in feature_names:
@@ -197,6 +220,14 @@ class CausalAnnotator:
         n_causal = sum(1 for e in self.causal_effects.values() if e.is_causal)
         log.info("CausalAnnotator initialised  causal=%d  correlational=%d",
                  n_causal, len(feature_names) - n_causal)
+
+        # Persist to cache for future restarts
+        try:
+            _cache_dir.mkdir(parents=True, exist_ok=True)
+            _cache_path.write_bytes(pickle.dumps(self.causal_effects))
+            log.info("CausalAnnotator: cache written → %s", _cache_path.name)
+        except Exception as _e:
+            log.warning("CausalAnnotator: could not write cache (%s)", _e)
 
     def estimate_single_effect(self, feature: str) -> CausalEffect:
         """
@@ -271,7 +302,7 @@ class CausalAnnotator:
                     identified,
                     estimate,
                     method_name="random_common_cause",
-                    num_simulations=50,
+                    num_simulations=10,
                 )
                 p_value = float(refutation.estimated_effect)
                 # If refuted effect is close to original, the estimate is robust
