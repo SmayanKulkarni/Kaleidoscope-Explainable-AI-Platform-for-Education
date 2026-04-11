@@ -1,9 +1,19 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getHealth, getMlopsHealth, getMlopsMetrics, getMlopsDriftReport, triggerRetrain, triggerReload } from '../api/dropout';
-import { recommendHealth } from '../api/recommend';
+import { recommendHealth, recommendStudent } from '../api/recommend';
+import FairnessAuditPanel from '../components/panels/FairnessAuditPanel';
+import GraphCard from '../components/layout/GraphCard';
+
+const CausalDagGraph = lazy(() => import('../components/graphs/CausalDagGraph'));
+
+const ADMIN_SAMPLE_ITEMS = [
+  { item_id: 'Module 4 Quiz',     features: { difficulty: 0.6, time_required: 30 } },
+  { item_id: 'TA Office Hours',   features: { difficulty: 0.2, time_required: 60 } },
+  { item_id: 'Forum Week 6',      features: { difficulty: 0.1, time_required: 15 } },
+];
 
 function HealthDot({ ok }) {
   return <span className={`w-2.5 h-2.5 rounded-full inline-block ${ok ? 'bg-green-500' : 'bg-red-400'}`} />;
@@ -24,6 +34,14 @@ function StatCard({ label, value, icon, sub }) {
 
 export default function AdminDashboard() {
   const [canaryFraction, setCanaryFraction] = useState(0.1);
+  const [runFairness, setRunFairness]       = useState(false);
+
+  const { data: fairnessSample, isLoading: fairnessLoading } = useQuery({
+    queryKey: ['admin-fairness-sample'],
+    queryFn:  () => recommendStudent('admin_sample', ADMIN_SAMPLE_ITEMS, 3),
+    enabled:  runFairness,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 });
   const { data: mlopsHealth } = useQuery({ queryKey: ['mlops-health'], queryFn: getMlopsHealth, refetchInterval: 30_000 });
@@ -120,6 +138,42 @@ export default function AdminDashboard() {
                     <span className="text-lg font-bold">{driftReport.n_drifted_features ?? 0}</span>
                   </div>
                 </div>
+              )}
+            </div>
+          </section>
+
+          {/* Causal DAG */}
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-lg">Causal Feature Graph</h2>
+            <GraphCard title="Causal DAG" height={420}>
+              <Suspense fallback={
+                <div className="flex items-center justify-center h-full text-slate-400 text-sm font-label animate-pulse">Loading graph…</div>
+              }>
+                <CausalDagGraph height={420} />
+              </Suspense>
+            </GraphCard>
+          </section>
+
+          {/* Fairness Monitor */}
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-lg">Fairness Monitor</h2>
+            <div className="bg-surface-container-lowest rounded-xl p-6 border border-outline-variant/5 shadow-sm">
+              {!runFairness ? (
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-slate-500">Run a sample recommendation call to check fairness across protected groups.</p>
+                  <button
+                    onClick={() => setRunFairness(true)}
+                    className="px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary/90 transition-colors"
+                  >
+                    Run Fairness Check
+                  </button>
+                </div>
+              ) : fairnessLoading ? (
+                <div className="animate-pulse h-32 bg-surface-container rounded-xl" />
+              ) : fairnessSample?.fairness_audit ? (
+                <FairnessAuditPanel report={fairnessSample.fairness_audit} />
+              ) : (
+                <p className="text-sm text-slate-400">No fairness audit data returned — backend may not support it yet.</p>
               )}
             </div>
           </section>

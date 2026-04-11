@@ -2,7 +2,9 @@ import { lazy, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useExplain } from '../hooks/useExplain';
 import { useRecommendStudent } from '../hooks/useRecommend';
+import { useMutation } from '@tanstack/react-query';
 import { DEFAULT_FEATURES } from '../api/dropout';
+import { recommendStudentExplain } from '../api/recommend';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import RiskScoreCard from '../components/panels/RiskScoreCard';
@@ -11,6 +13,9 @@ import AnchorRuleCard from '../components/panels/AnchorRuleCard';
 import TrustScoreCard from '../components/panels/TrustScoreCard';
 import WhatIfForm from '../components/panels/WhatIfForm';
 import RecommendationList from '../components/panels/RecommendationList';
+import NarrativeCard from '../components/panels/NarrativeCard';
+import PrototypesCard from '../components/panels/PrototypesCard';
+import ExplanationDriftBanner from '../components/panels/ExplanationDriftBanner';
 import GraphCard from '../components/layout/GraphCard';
 import { CAUSAL_COLORS } from '../lib/colors';
 
@@ -47,6 +52,19 @@ export default function StudentView() {
 
   const [graphTab, setGraphTab]         = useState('Interactions');
   const [selectedReco, setSelectedReco] = useState(null);
+  const [recoExplain, setRecoExplain]   = useState(null);
+
+  const recoExplainMutation = useMutation({
+    mutationFn: (item) =>
+      recommendStudentExplain(learner_id, item.features ?? DEFAULT_FEATURES, item.item_id ?? ''),
+    onSuccess: setRecoExplain,
+  });
+
+  const handleRecoSelect = (item) => {
+    setSelectedReco(item);
+    setRecoExplain(null);
+    recoExplainMutation.mutate(item);
+  };
 
   const recommendations = recoData?.recommendations ?? [];
 
@@ -126,13 +144,39 @@ export default function StudentView() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <h2 className="font-headline font-bold text-lg mb-3">Recommendations</h2>
+            <div className="space-y-4">
+              <h2 className="font-headline font-bold text-lg">Recommendations</h2>
               <RecommendationList
                 recommendations={recommendations}
-                onSelect={setSelectedReco}
+                onSelect={handleRecoSelect}
                 loading={recoLoading}
+                diversityScore={recoData?.diversity_score}
+                diversityWarning={recoData?.diversity_warning}
+                fairnessAudit={recoData?.fairness_audit}
               />
+              {recoExplain && (
+                <div className="space-y-3">
+                  <ExplanationDriftBanner drift={recoExplain.explanation_drift} />
+                  <NarrativeCard
+                    narratives={recoExplain.narratives}
+                    audience="learner"
+                    isLoading={recoExplainMutation.isPending}
+                  />
+                  <PrototypesCard
+                    prototypes={recoExplain.prototypes ?? []}
+                    loading={recoExplainMutation.isPending}
+                  />
+                  <AnchorRuleCard
+                    anchorRule={recoExplain.anchor_rule}
+                    precision={recoExplain.anchor_precision}
+                    loading={recoExplainMutation.isPending}
+                  />
+                  <TrustScoreCard
+                    trustScore={recoExplain.trust_score}
+                    loading={recoExplainMutation.isPending}
+                  />
+                </div>
+              )}
             </div>
             <div>
               <GraphCard title="Recommendation Path" height={340}>

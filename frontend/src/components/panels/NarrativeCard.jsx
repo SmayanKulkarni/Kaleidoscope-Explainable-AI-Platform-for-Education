@@ -1,8 +1,35 @@
-export default function NarrativeCard({ narratives, audience = 'learner' }) {
-  const text = narratives?.[audience] ?? narratives?.learner ?? narratives?.instructor;
-  if (!text) return null;
+export default function NarrativeCard({
+  narratives,
+  learnerText,
+  instructorText,
+  audience = 'learner',
+  isLoading = false,
+}) {
+  if (isLoading) return (
+    <div className="bg-gradient-to-br from-primary/5 to-primary-container/10 rounded-2xl p-6 border border-primary/10 animate-pulse h-36" />
+  );
+
+  const resolvedLearner =
+    learnerText ?? narratives?.learner_text ?? narratives?.learner ?? null;
+  const resolvedInstructor =
+    instructorText ?? narratives?.instructor_text ?? narratives?.instructor ?? null;
+
+  const text = audience === 'instructor' ? resolvedInstructor : resolvedLearner;
 
   const isInstructor = audience === 'instructor';
+
+  if (!text) return (
+    <div className="bg-gradient-to-br from-primary/5 to-primary-container/10 backdrop-blur-md p-6 rounded-2xl border border-primary/10 shadow-sm">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-primary-container flex items-center justify-center shrink-0 shadow-inner">
+          <span className="material-symbols-outlined text-white text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>
+            smart_toy
+          </span>
+        </div>
+        <p className="text-sm text-slate-400 italic font-label">Narration not available (LLM offline)</p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="bg-gradient-to-br from-primary/5 to-primary-container/10 backdrop-blur-md p-6 rounded-2xl border border-primary/10 shadow-sm">
@@ -27,7 +54,7 @@ export default function NarrativeCard({ narratives, audience = 'learner' }) {
 
       <p className="text-sm text-on-surface/80 leading-relaxed italic">"{text}"</p>
 
-      {narratives?.learner && narratives?.instructor && (
+      {resolvedLearner && resolvedInstructor && (
         <div className="mt-3 flex gap-2">
           {['learner', 'instructor'].map((a) => (
             <span

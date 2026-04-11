@@ -9,6 +9,7 @@ export default function TrustScoreCard({ trustScore, loading }) {
   const pct    = Math.round(score * 100);
 
   const meters = [
+    { label: 'Overall',      val: score,                 color: '#818cf8' },
     { label: 'Fidelity',     val: ts.fidelity     ?? 0, color: '#6366f1' },
     { label: 'Stability',    val: ts.stability     ?? 0, color: '#3b82f6' },
     { label: 'Completeness', val: ts.completeness  ?? 0, color: '#06b6d4' },

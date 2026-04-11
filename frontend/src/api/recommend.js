@@ -17,3 +17,16 @@ export const recommendInstructorExplain = (instructor_id, features, item_id = ''
 
 export const recommendHealth = () =>
   client.get('/recommend/health').then((r) => r.data);
+
+// Object-form aliases used by useMutation hooks
+export const postStudentRecommend = ({ learner_id, items, top_k = 5, include_shap = true }) =>
+  recommendStudent(learner_id, items, top_k, include_shap);
+
+export const postStudentExplain = ({ learner_id, features, item_id = '' }) =>
+  recommendStudentExplain(learner_id, features, item_id);
+
+export const postInstructorRecommend = ({ instructor_id, items, top_k = 5, include_shap = true }) =>
+  recommendInstructor(instructor_id, items, top_k, include_shap);
+
+export const postInstructorExplain = ({ instructor_id, features, item_id = '' }) =>
+  recommendInstructorExplain(instructor_id, features, item_id);

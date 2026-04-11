@@ -7,6 +7,11 @@ import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import RecommendationList from '../components/panels/RecommendationList';
 import AnchorRuleCard from '../components/panels/AnchorRuleCard';
+import TrustScoreCard from '../components/panels/TrustScoreCard';
+import NarrativeCard from '../components/panels/NarrativeCard';
+import InterventionMetaCard from '../components/panels/InterventionMetaCard';
+import FairnessAuditPanel from '../components/panels/FairnessAuditPanel';
+import InstructorStudentCard from '../components/panels/InstructorStudentCard';
 import WhatIfForm from '../components/panels/WhatIfForm';
 import GraphCard from '../components/layout/GraphCard';
 import { CAUSAL_COLORS } from '../lib/colors';
@@ -49,6 +54,7 @@ export default function InstructorView() {
   };
 
   const recommendations = recoData?.recommendations ?? [];
+  const useCards = recommendations.some((r) => r.features?.student_dropout_risk_score != null);
 
   return (
     <div className="bg-surface font-body text-on-surface min-h-screen">
@@ -73,11 +79,36 @@ export default function InstructorView() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <div>
               <h2 className="font-headline font-bold text-lg mb-3">Ranked Interventions</h2>
-              <RecommendationList
-                recommendations={recommendations}
-                onSelect={handleSelect}
-                loading={recoLoading}
-              />
+              {useCards ? (
+                <div className="space-y-3">
+                  {recoLoading
+                    ? [1, 2, 3].map((i) => (
+                        <div key={i} className="bg-surface-container-lowest rounded-xl p-4 border border-outline-variant/10 animate-pulse h-28" />
+                      ))
+                    : recommendations.map((item) => (
+                        <InstructorStudentCard
+                          key={item.item_id}
+                          item={item}
+                          onExplain={() => handleSelect(item)}
+                          onWhatIf={() => setSelectedReco(item)}
+                        />
+                      ))}
+                </div>
+              ) : (
+                <RecommendationList
+                  recommendations={recommendations}
+                  onSelect={handleSelect}
+                  loading={recoLoading}
+                  diversityScore={recoData?.diversity_score}
+                  diversityWarning={recoData?.diversity_warning}
+                  fairnessAudit={recoData?.fairness_audit}
+                />
+              )}
+              {!useCards && recoData?.fairness_audit && (
+                <div className="mt-3">
+                  <FairnessAuditPanel report={recoData.fairness_audit} />
+                </div>
+              )}
             </div>
 
             <div className="space-y-4">
@@ -96,8 +127,32 @@ export default function InstructorView() {
                     )}
                   </div>
                   {explainData?.anchor_rule && (
-                    <AnchorRuleCard anchorRule={explainData.anchor_rule} />
+                    <AnchorRuleCard
+                      anchorRule={explainData.anchor_rule}
+                      precision={explainData.anchor_precision}
+                    />
                   )}
+                  <InterventionMetaCard
+                    interventionType={explainData?.intervention_type}
+                    interventionUrgency={explainData?.intervention_urgency}
+                    contentType={explainData?.recommended_content_type}
+                    effortHours={explainData?.estimated_effort_hours}
+                    studentRiskScore={explainData?.student_dropout_risk_score}
+                    studentTrajectory={explainData?.student_risk_trajectory}
+                    cohortDropoutRate={explainData?.cohort_avg_dropout_rate}
+                    instructorArchetype={explainData?.instructor_archetype}
+                    teachingStyle={explainData?.instructor_teaching_style}
+                    loading={explainMutation.isPending}
+                  />
+                  <TrustScoreCard
+                    trustScore={explainData?.trust_score}
+                    loading={explainMutation.isPending}
+                  />
+                  <NarrativeCard
+                    narratives={explainData?.narratives}
+                    audience="instructor"
+                    isLoading={explainMutation.isPending}
+                  />
                   <WhatIfForm
                     baseFeatures={selectedReco.features ?? {}}
                     mode="recommend"

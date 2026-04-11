@@ -234,25 +234,8 @@ def _init_heavy_explainers(X_background) -> None:
 
     log.info("[bg] Starting heavy XAI explainer initialisation …")
 
-    state.dice_explainer = DiCEExplainer(
-        model         = state.gbm_model,
-        X_train       = state.X_train,
-        feature_names = state.feature_names,
-        y_train       = state.y_train,
-    )
-    log.info("[bg] DiCEExplainer initialised")
-    # ── Background sequences for DeepSHAP (LSTM) ──
-    _X_background = None
-    _snapshots_path = DATA_DIR / "temporal" / "snapshots.pkl"
-    if state.lstm_model is not None and _snapshots_path.exists():
-        try:
-            _bg_seqs, _, _ = build_sequences(_snapshots_path)
-            _X_background  = _bg_seqs[:200]  # subsample — DeepSHAP only needs reference
-            log.info("LSTM background sequences loaded  shape=%s", _X_background.shape)
-        except Exception as _e:
-            log.warning("Failed to load LSTM background sequences: %s", _e)
-
     # ── Phase 2: Explainers + Evaluators ──
+    _X_background = X_background  # None on first call; updated later by LSTM block
     if state.gbm_model is not None and state.feature_names:
         try:
             state.shap_explainer = SHAPExplainer(
@@ -285,87 +268,56 @@ def _init_heavy_explainers(X_background) -> None:
     def _predict_fn(X):
         return (state.gbm_model.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
-    state.anchors_explainer = AnchorsExplainer(
-        predict_fn    = _predict_fn,
-        X_train       = state.X_train,
-        feature_names = state.feature_names,
-    )
-    log.info("[bg] AnchorsExplainer initialised")
-        try:
-            state.anchors_explainer = AnchorsExplainer(
-                predict_fn    = _predict_fn,
-                X_train       = state.X_train,
-                feature_names = state.feature_names,
-            )
-            log.info("AnchorsExplainer initialised")
-        except Exception as _anchors_err:
-            log.warning("AnchorsExplainer failed to initialise: %s", _anchors_err)
+    try:
+        state.anchors_explainer = AnchorsExplainer(
+            predict_fn    = _predict_fn,
+            X_train       = state.X_train,
+            feature_names = state.feature_names,
+        )
+        log.info("AnchorsExplainer initialised")
+    except Exception as _anchors_err:
+        log.warning("AnchorsExplainer failed to initialise: %s", _anchors_err)
 
-    state.prototype_explainer = PrototypeExplainer(
-        X_train       = state.X_train,
-        y_train       = state.y_train,
-        learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
-        feature_names = state.feature_names,
-    )
-    log.info("[bg] PrototypeExplainer initialised")
-        try:
-            state.prototype_explainer = PrototypeExplainer(
-                X_train       = state.X_train,
-                y_train       = state.y_train,
-                learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
-                feature_names = state.feature_names,
-            )
-            log.info("PrototypeExplainer initialised")
-        except Exception as _proto_err:
-            log.warning("PrototypeExplainer failed to initialise: %s", _proto_err)
+    try:
+        state.prototype_explainer = PrototypeExplainer(
+            X_train       = state.X_train,
+            y_train       = state.y_train,
+            learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
+            feature_names = state.feature_names,
+        )
+        log.info("PrototypeExplainer initialised")
+    except Exception as _proto_err:
+        log.warning("PrototypeExplainer failed to initialise: %s", _proto_err)
 
-    state.uncertainty_estimator = UncertaintyEstimator(
-        model = state.gbm_model,
-        X_cal = state.X_train,
-        y_cal = state.y_train,
-    )
-    log.info("[bg] UncertaintyEstimator initialised")
-        try:
-            state.uncertainty_estimator = UncertaintyEstimator(
-                model = state.gbm_model,
-                X_cal = state.X_train,
-                y_cal = state.y_train,
-            )
-            log.info("UncertaintyEstimator initialised")
-        except Exception as _unc_err:
-            log.warning("UncertaintyEstimator failed to initialise: %s", _unc_err)
+    try:
+        state.uncertainty_estimator = UncertaintyEstimator(
+            model = state.gbm_model,
+            X_cal = state.X_train,
+            y_cal = state.y_train,
+        )
+        log.info("UncertaintyEstimator initialised")
+    except Exception as _unc_err:
+        log.warning("UncertaintyEstimator failed to initialise: %s", _unc_err)
 
-    state.causal_annotator = CausalAnnotator(
-        X_train       = state.X_train,
-        y_train       = state.y_train,
-        feature_names = state.feature_names,
-    )
-    log.info("[bg] CausalAnnotator initialised (DoWhy / cache)")
-        try:
-            state.causal_annotator = CausalAnnotator(
-                X_train       = state.X_train,
-                y_train       = state.y_train,
-                feature_names = state.feature_names,
-            )
-            log.info("CausalAnnotator initialised (DoWhy)")
-        except Exception as _causal_err:
-            log.warning("CausalAnnotator failed to initialise: %s", _causal_err)
+    try:
+        state.causal_annotator = CausalAnnotator(
+            X_train       = state.X_train,
+            y_train       = state.y_train,
+            feature_names = state.feature_names,
+        )
+        log.info("CausalAnnotator initialised (DoWhy)")
+    except Exception as _causal_err:
+        log.warning("CausalAnnotator failed to initialise: %s", _causal_err)
 
-    state.action_ranker = ActionRanker(
-        feature_names    = state.feature_names,
-        X_train          = state.X_train,
-        causal_annotator = state.causal_annotator,
-    )
-    log.info("[bg] ActionRanker initialised")
-        try:
-            state.action_ranker = ActionRanker(
-                feature_names    = state.feature_names,
-                X_train          = state.X_train,
-                causal_annotator = state.causal_annotator,
-            )
-            log.info("ActionRanker initialised")
-        except Exception as _ar_err:
-            log.warning("ActionRanker failed to initialise: %s", _ar_err)
+    try:
+        state.action_ranker = ActionRanker(
+            feature_names    = state.feature_names,
+            X_train          = state.X_train,
+            causal_annotator = state.causal_annotator,
+        )
+        log.info("ActionRanker initialised")
+    except Exception as _ar_err:
+        log.warning("ActionRanker failed to initialise: %s", _ar_err)
 
     import pandas as pd  # noqa: F401 — triggers Evidently's pandas dep lazily
     state.drift_monitor = DriftMonitor(
@@ -374,9 +326,12 @@ def _init_heavy_explainers(X_background) -> None:
     )
     log.info("[bg] DriftMonitor initialised")
 
-    # Update ranker explainers with the now-available causal_annotator (re-load to wire it in)
+    # Wire causal_annotator into already-loaded ranker explainers (preserves reference_pool)
     if state.causal_annotator is not None:
-        _load_rankers()
+        for _rattr in ("student_ranker_explainer", "instructor_ranker_explainer"):
+            _re = getattr(state, _rattr, None)
+            if _re is not None:
+                _re.causal_annotator = state.causal_annotator
 
     # LSTM background sequences for DeepSHAP
     if state.lstm_model is not None and X_background is None:

@@ -554,3 +554,19 @@ POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_
 - **Why it was done:** Instructor dataset was upgraded from 9 to 40 columns. Old model could not leverage instructor teaching style, department, experience, student academic metrics, cohort stats, or intervention metadata. Retrained model now captures these signals. Plan was created to guide a separate frontend IDE agent to integrate all backend updates without requiring manual discovery.
 
 - **Dependencies/Impacts:** `instructor_ranker.pkl` is a breaking change for any caller using the old 9-feature schema — all callers must now send 34 features. Backend is backward-compatible: missing features default to 0 via `_cast_and_encode`. Frontend must update its instructor recommendation request builder (see `docs/XAI_INTEGRATION_PLAN.md § Part 6`).
+
+---
+
+### [2026-04-12] Cascade / Windsurf — Fix `_init_heavy_explainers` IndentationError in `main.py`
+
+- **Files Modified:** `backend/app/main.py`
+
+- **What was done:** Identified and fixed a Python `IndentationError` that prevented the backend server from starting. The `_init_heavy_explainers` function contained duplicate code blocks: each explainer (AnchorsExplainer, PrototypeExplainer, UncertaintyEstimator, CausalAnnotator, ActionRanker) had a bare assignment at 4-space indentation followed by a duplicate `try/except` block at 8-space indentation (dead code inside `_predict_fn` for the first, and genuine IndentationError for the rest). Also removed a duplicate bare `DiCEExplainer` init and a now-redundant inner LSTM background-sequence block. Fixed the `_load_rankers()` re-call that would overwrite already-loaded rankers (losing the `reference_pool` needed for KNN prototypes) — replaced with a targeted attribute update that sets `causal_annotator` on each `RankerExplainer` in-place. Added `_X_background = X_background` to restore the variable removed with the duplicate block.
+
+- **Why it was done:** `python -m py_compile` / `ast.parse()` confirmed an IndentationError at the affected lines; server could not be imported or started. Root cause: a previous session's partial refactor left both old bare-assignment stanzas and new try/except stanzas in the same function body at conflicting indentation levels.
+
+- **Root bug location:** `_init_heavy_explainers()` lines 288–368 (pre-fix). Symptom: `IndentationError: unexpected indent` on the `try:` blocks at 8-space after 4-space parent context.
+
+- **Verification:** `python -c "import ast; ast.parse(open(r'...main.py', encoding='utf-8').read()); print('OK')"` → `OK - no syntax errors`
+
+- **Dependencies/Impacts:** All backend endpoints are now importable. `reference_pool` is preserved in both ranker explainers (KNN prototype Feature 5 now correctly uses the precomputed CSV pool). `causal_annotator` is wired into ranker explainers after background init completes without recreating them.

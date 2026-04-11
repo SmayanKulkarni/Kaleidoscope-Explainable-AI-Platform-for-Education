@@ -2,8 +2,16 @@ import { useState } from 'react';
 
 const RANK_COLORS = ['#f59e0b', '#94a3b8', '#cd7f32'];
 
-export default function RecommendationList({ recommendations, onSelect, loading }) {
+export default function RecommendationList({
+  recommendations,
+  onSelect,
+  loading,
+  diversityScore,
+  diversityWarning,
+  fairnessAudit,
+}) {
   const [expanded, setExpanded] = useState(null);
+  const [showFairness, setShowFairness] = useState(false);
 
   if (loading) return (
     <div className="space-y-3">
@@ -19,8 +27,50 @@ export default function RecommendationList({ recommendations, onSelect, loading 
     <div className="text-slate-400 text-sm font-label text-center py-8">No recommendations available.</div>
   );
 
+  const fairnessFlagged = fairnessAudit && fairnessAudit.overall_fair === false;
+
   return (
     <div className="space-y-3">
+      {/* Diversity badge */}
+      {diversityScore != null && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-bold bg-primary/10 text-primary px-2.5 py-0.5 rounded-full font-label">
+            {Math.round(diversityScore * 100)}% diverse
+          </span>
+          {diversityWarning && (
+            <span className="text-[10px] font-label bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full">
+              ⚠ {diversityWarning}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Fairness banner */}
+      {fairnessFlagged && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-red-700 font-label">
+              ⚠ Fairness issue detected — some groups are scored differently
+            </span>
+            <button
+              onClick={() => setShowFairness(!showFairness)}
+              className="text-[10px] text-red-600 font-bold underline font-label shrink-0"
+            >
+              {showFairness ? 'Hide' : 'Details'}
+            </button>
+          </div>
+          {showFairness && (
+            <div className="mt-2 space-y-1">
+              {(fairnessAudit.flagged_disparities ?? []).map((d, i) => (
+                <div key={i} className="text-[10px] font-label text-red-600">
+                  {d.feature} → {d.group}: {d.score.toFixed(2)} ({d.direction} by {d.deviation_pct.toFixed(1)}%)
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {items.map((item, idx) => {
         const isOpen = expanded === idx;
         const score  = item.score ?? 0;
