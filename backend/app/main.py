@@ -47,7 +47,7 @@ from backend.app.explainers.prototype_explainer import PrototypeExplainer
 from backend.app.explainers.shap_explainer import SHAPExplainer
 from backend.app.mlops.drift_monitor import DriftMonitor
 from backend.app.mlops.prediction_logger import PredictionLogger
-from backend.app.model.lstm_trainer import DropoutLSTM
+from backend.app.model.lstm_trainer import DropoutLSTM, build_sequences
 from backend.app.prescriptor.action_ranker import ActionRanker
 from backend.app.auth.auth import get_current_active_student, get_current_user_optional
 from backend.app.auth.database import init_db as init_auth_db
@@ -176,12 +176,24 @@ async def lifespan(app: FastAPI):
         state.lstm_model = lstm
         log.info("LSTM loaded  val_auc=%.4f", state.lstm_config.get("best_val_auc", 0))
 
+    # ── Background sequences for DeepSHAP (LSTM) ──
+    _X_background = None
+    _snapshots_path = DATA_DIR / "temporal" / "snapshots.pkl"
+    if state.lstm_model is not None and _snapshots_path.exists():
+        try:
+            _bg_seqs, _, _ = build_sequences(_snapshots_path)
+            _X_background  = _bg_seqs[:200]  # subsample — DeepSHAP only needs reference
+            log.info("LSTM background sequences loaded  shape=%s", _X_background.shape)
+        except Exception as _e:
+            log.warning("Failed to load LSTM background sequences: %s", _e)
+
     # ── Phase 2: Explainers + Evaluators ──
     if state.gbm_model is not None and state.feature_names:
         state.shap_explainer = SHAPExplainer(
             gbm_model     = state.gbm_model,
             feature_names = state.feature_names,
             lstm_model    = state.lstm_model,
+            X_background  = _X_background,
         )
         log.info("SHAPExplainer initialised")
 
@@ -350,6 +362,55 @@ def _risk_label(score: float) -> str:
     return "low"
 
 
+def _build_lstm_sequence(
+    history: list[LearnerFeatures],
+    current: LearnerFeatures,
+    feature_names: list[str],
+) -> np.ndarray:
+    """
+    Build a real (1, T=6, F) sequence for the LSTM from per-week snapshots.
+
+    history  : list of LearnerFeatures from past weeks, oldest first.
+               Each must carry the correct current_week_in_course.
+    current  : the current-week snapshot (always placed at its week slot).
+
+    Week slots are aligned to WEEK_ORDER = [2,4,6,8,10,12].
+    Missing slots stay zero (cold-start / not-yet-observed).
+    Falls back to tiling current features if history is empty.
+    """
+    seq = np.zeros((1, len(WEEK_ORDER), len(feature_names)), dtype=np.float32)
+
+    def _to_vec(f: LearnerFeatures) -> np.ndarray:
+        fd = f.model_dump()
+        return np.array([fd[n] for n in feature_names], dtype=np.float32)
+
+    if history:
+        for snap in history:
+            week = snap.current_week_in_course
+            if week in WEEK_ORDER:
+                slot = WEEK_ORDER.index(week)
+                seq[0, slot] = _to_vec(snap)
+        # Place current in its slot (overwrites if duplicate)
+        curr_week = current.current_week_in_course
+        curr_slot = min(
+            WEEK_ORDER.index(curr_week) if curr_week in WEEK_ORDER
+            else len(WEEK_ORDER) - 1,
+            len(WEEK_ORDER) - 1,
+        )
+        seq[0, curr_slot] = _to_vec(current)
+    else:
+        # Fallback: tile current snapshot up to the current week slot
+        week_idx = min(
+            max(current.current_week_in_course // 2 - 1, 0),
+            len(WEEK_ORDER) - 1,
+        )
+        vec = _to_vec(current)
+        for i in range(week_idx + 1):
+            seq[0, i] = vec
+
+    return seq
+
+
 def _require_model():
     if state.gbm_model is None:
         raise HTTPException(status_code=503, detail="Model not loaded — run trainer.py first")
@@ -413,11 +474,8 @@ def predict(features: LearnerFeatures, bg: BackgroundTasks, model: str = "gbm"):
     X = _features_to_array(features)
 
     if model == "lstm" and state.lstm_model is not None:
-        seq = np.zeros((1, len(WEEK_ORDER), len(state.feature_names)), dtype=np.float32)
-        week_idx = min(features.current_week_in_course // 2 - 1, len(WEEK_ORDER) - 1)
-        for i in range(week_idx + 1):
-            seq[0, i] = X[0]
-        proba = state.lstm_model.predict_proba(seq)
+        seq    = _build_lstm_sequence([], features, state.feature_names)
+        proba  = state.lstm_model.predict_proba(seq)
         risk_score = float(proba[0, 1])
         model_used = "lstm"
     elif (
@@ -482,6 +540,7 @@ class ExplainRequest(BaseModel):
     learner_id: str = "anonymous"
     model:      str = "gbm"
     audience:   str = "both"  # "learner" | "instructor" | "both"
+    history:    list[LearnerFeatures] = []  # past weekly snapshots (week 2,4,6...) oldest-first
 
 
 @app.post("/explain")
@@ -559,10 +618,7 @@ def explain(req: ExplainRequest):
 
     # LSTM temporal attributions
     if req.model == "lstm" and state.shap_explainer.deep_explainer is not None:
-        week_idx = min(req.features.current_week_in_course // 2 - 1, len(WEEK_ORDER) - 1)
-        seq = np.zeros((1, len(WEEK_ORDER), len(state.feature_names)), dtype=np.float32)
-        for i in range(week_idx + 1):
-            seq[0, i] = X[0]
+        seq      = _build_lstm_sequence(req.history, req.features, state.feature_names)
         temporal = state.shap_explainer.explain_temporal(seq)
         resp["temporal_attributions"] = temporal.to_dict()
 
