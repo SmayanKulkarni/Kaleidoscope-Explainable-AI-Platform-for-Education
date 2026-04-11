@@ -5,12 +5,122 @@
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
   html { font-family: 'Manrope', sans-serif; }
+  
+  :root {
+    --color-surface: 248 250 252;
+    --color-background: 248 250 252;
+    --color-on-surface: 15 23 42;
+    --color-on-background: 15 23 42;
+    --color-surface-container-lowest: 255 255 255;
+    --color-surface-container-low: 241 245 249;
+    --color-surface-container: 226 232 240;
+    --color-surface-container-high: 203 213 225;
+    --color-surface-container-highest: 148 163 184;
+    --color-surface-variant: 203 213 225;
+    --color-on-surface-variant: 71 85 105;
+    --color-outline: 148 163 184;
+    --color-outline-variant: 203 213 225;
+
+    --color-primary: 13 148 136;
+    --color-on-primary: 255 255 255;
+    --color-primary-container: 204 251 241;
+    --color-on-primary-container: 17 94 89;
+    --color-primary-fixed: 153 246 228;
+    --color-primary-fixed-dim: 94 234 212;
+    --color-on-primary-fixed: 19 78 74;
+    --color-on-primary-fixed-variant: 15 118 110;
+    
+    --color-secondary: 15 118 110;
+    --color-on-secondary: 255 255 255;
+    --color-secondary-container: 153 246 228;
+    --color-on-secondary-container: 17 94 89;
+    --color-secondary-fixed: 204 251 241;
+    --color-secondary-fixed-dim: 153 246 228;
+    --color-on-secondary-fixed: 19 78 74;
+    --color-on-secondary-fixed-variant: 15 118 110;
+
+    --color-tertiary: 234 88 12;
+    --color-on-tertiary: 255 255 255;
+    --color-tertiary-container: 255 237 213;
+    --color-on-tertiary-container: 154 52 18;
+    --color-tertiary-fixed: 255 237 213;
+    --color-tertiary-fixed-dim: 254 215 170;
+    --color-on-tertiary-fixed: 124 45 18;
+    --color-on-tertiary-fixed-variant: 234 88 12;
+
+    --color-error: 239 68 68;
+    --color-on-error: 255 255 255;
+    --color-error-container: 254 226 226;
+    --color-on-error-container: 153 27 27;
+    
+    --color-surface-tint: 13 148 136;
+    --color-inverse-surface: 30 41 59;
+    --color-inverse-on-surface: 248 250 252;
+    --color-inverse-primary: 94 234 212;
+    --color-surface-dim: 203 213 225;
+    --color-surface-bright: 255 255 255;
+  }
+
+  .dark {
+    --color-surface: 14 21 19;
+    --color-background: 14 21 19;
+    --color-on-surface: 221 228 225;
+    --color-on-background: 221 228 225;
+    --color-surface-container-lowest: 9 16 14;
+    --color-surface-container-low: 22 29 27;
+    --color-surface-container: 26 33 31;
+    --color-surface-container-high: 36 43 41;
+    --color-surface-container-highest: 47 54 52;
+    --color-surface-variant: 47 54 52;
+    --color-on-surface-variant: 186 202 197;
+    --color-outline: 133 148 143;
+    --color-outline-variant: 59 74 70;
+
+    --color-primary: 68 229 204;
+    --color-on-primary: 0 55 48;
+    --color-primary-container: 0 201 177;
+    --color-on-primary-container: 0 79 68;
+    --color-primary-fixed: 95 250 224;
+    --color-primary-fixed-dim: 56 221 196;
+    --color-on-primary-fixed: 0 32 27;
+    --color-on-primary-fixed-variant: 0 80 70;
+    
+    --color-secondary: 156 209 197;
+    --color-on-secondary: 0 55 48;
+    --color-secondary-container: 28 81 72;
+    --color-on-secondary-container: 142 195 183;
+    --color-secondary-fixed: 183 237 225;
+    --color-secondary-fixed-dim: 156 209 197;
+    --color-on-secondary-fixed: 0 32 27;
+    --color-on-secondary-fixed-variant: 25 79 70;
+
+    --color-tertiary: 255 193 159;
+    --color-on-tertiary: 80 36 7;
+    --color-tertiary-container: 232 163 124;
+    --color-on-tertiary-container: 105 56 26;
+    --color-tertiary-fixed: 255 219 201;
+    --color-tertiary-fixed-dim: 254 182 142;
+    --color-on-tertiary-fixed: 51 18 0;
+    --color-on-tertiary-fixed-variant: 107 58 27;
+
+    --color-error: 255 180 171;
+    --color-on-error: 105 0 5;
+    --color-error-container: 147 0 10;
+    --color-on-error-container: 255 218 214;
+
+    --color-surface-tint: 56 221 196;
+    --color-inverse-surface: 221 228 225;
+    --color-inverse-on-surface: 43 50 48;
+    --color-inverse-primary: 0 107 93;
+    --color-surface-dim: 14 21 19;
+    --color-surface-bright: 51 59 57;
+  }
+
   body {
-    @apply bg-surface text-on-surface min-h-screen;
+    @apply bg-surface text-on-surface min-h-screen transition-colors duration-300;
     -webkit-font-smoothing: antialiased;
   }
 }
-
 @layer components {
   /* Material icon utility */
   .icon {

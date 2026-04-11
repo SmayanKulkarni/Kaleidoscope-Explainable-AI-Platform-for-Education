@@ -1,23 +1,41 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useState, useEffect } from 'react';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [darkMode, setDarkMode] = useState(() => {
+    return document.documentElement.classList.contains('dark') || 
+      (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
+
   if (!user) return null;
 
   return (
     <nav className="fixed top-0 w-full z-50 bg-surface/80 backdrop-blur-xl flex justify-between items-center px-8 h-16 max-w-full shadow-sm">
       <div className="flex items-center gap-8">
-        <span className="text-2xl font-black tracking-tight text-blue-900 font-headline">LearnLens</span>
+        <span className="text-2xl font-black tracking-tight text-blue-900 font-headline dark:text-blue-200">LearnLens</span>
         <div className="hidden md:flex gap-6 h-full items-center">
           {user.role === 'student' ? (
             <>
               <button 
                 onClick={() => navigate('/student')} 
-                className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/student' ? 'text-blue-700 font-bold border-b-2 border-blue-700' : 'text-slate-500 hover:text-blue-600'}`}
+                className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/student' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
               >
                 Student View
               </button>
@@ -26,7 +44,7 @@ export default function Navbar() {
             <>
               <button 
                 onClick={() => navigate('/instructor')} 
-                className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/instructor' ? 'text-blue-700 font-bold border-b-2 border-blue-700' : 'text-slate-500 hover:text-blue-600'}`}
+                className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/instructor' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
               >
                 Instructor View
               </button>
@@ -40,7 +58,14 @@ export default function Navbar() {
           <span className="text-xs font-label text-slate-500">Current Role</span>
           <span className="text-sm font-bold text-primary capitalize">{user.role} Role</span>
         </div>
-        <button className="material-symbols-outlined text-slate-600 hover:bg-blue-50/50 p-2 rounded-full transition-colors">
+        <button 
+          onClick={() => setDarkMode(!darkMode)}
+          title="Toggle Theme"
+          className="material-symbols-outlined text-slate-600 hover:bg-surface-container p-2 rounded-full transition-colors dark:text-slate-300"
+        >
+          {darkMode ? 'light_mode' : 'dark_mode'}
+        </button>
+        <button className="material-symbols-outlined text-slate-600 hover:bg-surface-container p-2 rounded-full transition-colors dark:text-slate-300">
           notifications
         </button>
         <button onClick={logout} title="Logout" className="material-symbols-outlined text-error hover:bg-error/10 p-2 rounded-full transition-colors">
