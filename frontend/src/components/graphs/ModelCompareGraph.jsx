@@ -2,6 +2,13 @@ import { useRef, useEffect } from 'react';
 import ForceGraph3D from 'react-force-graph-3d';
 import { compareToGraph } from '../../lib/graphTransforms';
 
+const COLOR_RE = /^(#(?:[0-9a-fA-F]{3,8})|rgba?\([^\)]+\)|hsla?\([^\)]+\))$/;
+const safeColor = (value, fallback) => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  return COLOR_RE.test(normalized) ? normalized : fallback;
+};
+
 export default function ModelCompareGraph({ compareResult, width, height = 400 }) {
   const fgRef = useRef();
   const { nodes, links } = compareToGraph(compareResult);
@@ -24,11 +31,11 @@ export default function ModelCompareGraph({ compareResult, width, height = 400 }
       graphData={{ nodes, links }}
       width={width}
       height={height}
-      backgroundColor="transparent"
+      backgroundColor="rgba(0,0,0,0)"
       nodeLabel="name"
       nodeVal="val"
-      nodeColor="color"
-      linkColor="color"
+      nodeColor={(n) => safeColor(n?.color, '#94a3b8')}
+      linkColor={(l) => safeColor(l?.color, '#cbd5e1')}
       linkWidth={1.5}
       linkDirectionalArrowLength={4}
       linkDirectionalArrowRelPos={1}

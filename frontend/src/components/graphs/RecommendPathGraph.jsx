@@ -24,7 +24,7 @@ export default function RecommendPathGraph({ recommendation, learnerId, width, h
       graphData={{ nodes, links }}
       width={width}
       height={height}
-      backgroundColor="transparent"
+      backgroundColor="rgba(0,0,0,0)"
       nodeLabel="name"
       nodeVal="val"
       nodeColor={(n) => n.isStudent ? '#6366f1' : n.isResource ? '#f59e0b' : '#94a3b8'}

@@ -19,14 +19,6 @@
 - **What was done:** Established the agentic workflow rules, memory structures, and summarized the XAI documentation.
 - **Why it was done:** To ensure cross-IDE compatibility and robust long-term LLM collaboration.
 - **Dependencies/Impacts:** Core rule files now depend on this ledger being updated.
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
 ### [2026-04-11 12:37] Cascade (Windsurf) - OULAD Data Pipeline Implementation
 - **Files Created:** `backend/app/model/data_loader.py`, `requirements-data.txt`, `backend/__init__.py`, `backend/app/__init__.py`, `backend/app/model/__init__.py`

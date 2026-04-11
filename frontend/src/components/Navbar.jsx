@@ -8,7 +8,7 @@ export default function Navbar() {
   const location = useLocation();
 
   const [darkMode, setDarkMode] = useState(() => {
-    return document.documentElement.classList.contains('dark') || 
+    return document.documentElement.classList.contains('dark') ||
       (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
 
@@ -33,8 +33,8 @@ export default function Navbar() {
         <div className="hidden md:flex gap-6 h-full items-center">
           {user.role === 'student' ? (
             <>
-              <button 
-                onClick={() => navigate('/student')} 
+              <button
+                onClick={() => navigate('/student')}
                 className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/student' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
               >
                 Student View
@@ -42,8 +42,8 @@ export default function Navbar() {
             </>
           ) : (
             <>
-              <button 
-                onClick={() => navigate('/instructor')} 
+              <button
+                onClick={() => navigate('/instructor')}
                 className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/instructor' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
               >
                 Instructor View
@@ -58,7 +58,7 @@ export default function Navbar() {
           <span className="text-xs font-label text-slate-500">Current Role</span>
           <span className="text-sm font-bold text-primary capitalize">{user.role} Role</span>
         </div>
-        <button 
+        <button
           onClick={() => setDarkMode(!darkMode)}
           title="Toggle Theme"
           className="material-symbols-outlined text-slate-600 hover:bg-surface-container p-2 rounded-full transition-colors dark:text-slate-300"
@@ -72,11 +72,11 @@ export default function Navbar() {
           logout
         </button>
         <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden ring-2 ring-primary/10">
-          <img 
-            alt="User Avatar" 
-            className="w-full h-full object-cover" 
-            src={user.role === 'student' 
-              ? "https://lh3.googleusercontent.com/aida-public/AB6AXuDiDnUBSwYnGf5KM0sdkEQ2DIcLurA9cqT8TUD3MZg2f3VtZ3tCgcj1LZb0nw_p8XdOvwZW6FoSsdNXnlJTLNTcAiycvpEZPIW4_ovmMH1TvA9NUCicYocez0Dya6q8b47mKBQALpkN9ksKPSeMoCgDe283X_fMwdA3EnHHfa_L0aY7csvSOlKkFKGNxIO_vcu0zOEF5-ox8k06kI_xf33ofS6MJeSpEfzvdhA6ROF0gpEz0DrmDzr2MyQZqs9vz9G8vmMQx0uUwoE" 
+          <img
+            alt="User Avatar"
+            className="w-full h-full object-cover"
+            src={user.role === 'student'
+              ? "https://lh3.googleusercontent.com/aida-public/AB6AXuDiDnUBSwYnGf5KM0sdkEQ2DIcLurA9cqT8TUD3MZg2f3VtZ3tCgcj1LZb0nw_p8XdOvwZW6FoSsdNXnlJTLNTcAiycvpEZPIW4_ovmMH1TvA9NUCicYocez0Dya6q8b47mKBQALpkN9ksKPSeMoCgDe283X_fMwdA3EnHHfa_L0aY7csvSOlKkFKGNxIO_vcu0zOEF5-ox8k06kI_xf33ofS6MJeSpEfzvdhA6ROF0gpEz0DrmDzr2MyQZqs9vz9G8vmMQx0uUwoE"
               : "https://lh3.googleusercontent.com/aida-public/AB6AXuAcMt0aTAQvZJ0niRph4aXYsYONeeeyr8ONzByeqDU0aGxo6BbqdKGlvdkUYdwg3iY3AUtajBhNuWNmY-4tUPlJF-ERq_3KY9XbU-FcYDfCVCDrBzQu-xSPBIKuKmmdln9sRYOQIGnDipKQU-BzQUVN600jybrhsWQ3Xv9KverrLZ0rKG1M8m74DuF7tE8wMxOy4kQxeNgMf3ouxBIXfOesHja76B4o3Wwa5QK64uGIK5tNyYPXu4G94QcHj54YAV03mDduPOYHZfA"
             }
           />

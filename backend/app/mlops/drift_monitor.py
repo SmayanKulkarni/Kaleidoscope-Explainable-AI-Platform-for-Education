@@ -137,59 +137,103 @@ class DriftMonitor:
         else:
             current_df = current_data.copy()
 
-        if current_df.empty:
+        # Normalise columns and types to avoid schema-related failures.
+        current_df.columns = [str(c) for c in current_df.columns]
+        reference_df = self.reference_df.copy()
+        reference_df.columns = [str(c) for c in reference_df.columns]
+
+        # Drop duplicate labels.
+        current_df = current_df.loc[:, ~current_df.columns.duplicated()].copy()
+        reference_df = reference_df.loc[:, ~reference_df.columns.duplicated()].copy()
+
+        expected = [str(c) for c in self.feature_names]
+        # Preserve model feature order while removing duplicates.
+        seen_expected = set()
+        expected_unique = []
+        for c in expected:
+            if c not in seen_expected:
+                expected_unique.append(c)
+                seen_expected.add(c)
+
+        common = [c for c in expected_unique if c in current_df.columns and c in reference_df.columns]
+        if not common:
             return DriftReport(
                 dataset_drift=False,
                 n_drifted_features=0,
-                n_total_features=len(self.feature_names),
+                n_total_features=0,
                 drift_share=0.0,
                 feature_drifts=[],
             )
 
-        from evidently.metric_preset import DataDriftPreset
+        current_df = current_df[common].apply(pd.to_numeric, errors="coerce")
+        reference_df = reference_df[common].apply(pd.to_numeric, errors="coerce")
+
+        valid_cols = [c for c in common if not (current_df[c].isna().all() and reference_df[c].isna().all())]
+        if not valid_cols:
+            return DriftReport(
+                dataset_drift=False,
+                n_drifted_features=0,
+                n_total_features=0,
+                drift_share=0.0,
+                feature_drifts=[],
+            )
+
+        current_df = current_df[valid_cols]
+        reference_df = reference_df[valid_cols]
+
+        if current_df.empty:
+            return DriftReport(
+                dataset_drift=False,
+                n_drifted_features=0,
+                n_total_features=len(valid_cols),
+                drift_share=0.0,
+                feature_drifts=[],
+            )
+
+        # ── Evidently 0.6.x drift detection ─────────────────────────────────
+        # Correct import paths for evidently 0.6.7:
+        #   Report       → evidently.report.Report
+        #   DataDrift    → evidently.metric_preset.DataDriftPreset
         from evidently.report import Report
+        from evidently.metric_preset import DataDriftPreset
 
         report = Report(metrics=[DataDriftPreset()])
-        report.run(
-            reference_data=self.reference_df,
-            current_data=current_df,
-        )
-
+        report.run(reference_data=reference_df[valid_cols], current_data=current_df[valid_cols])
         report_dict = report.as_dict()
 
-        # Parse Evidently's report structure
-        feature_drifts = []
+        # Parse Evidently's result structure
+        feature_drifts: list[FeatureDrift] = []
         dataset_drift = False
         n_drifted = 0
 
-        results = report_dict.get("metrics", [])
-        for metric_result in results:
+        for metric_result in report_dict.get("metrics", []):
             metric_data = metric_result.get("result", {})
 
-            # Dataset-level drift
+            # Dataset-level drift summary
             if "dataset_drift" in metric_data:
-                dataset_drift = metric_data["dataset_drift"]
-                n_drifted = metric_data.get("number_of_drifted_columns", 0)
+                dataset_drift = bool(metric_data["dataset_drift"])
+                n_drifted = int(metric_data.get("number_of_drifted_columns", 0))
 
             # Per-feature drift
-            drift_by_columns = metric_data.get("drift_by_columns", {})
-            for fname, fdata in drift_by_columns.items():
-                if fname in self.feature_names:
-                    feature_drifts.append(FeatureDrift(
-                        feature=fname,
-                        drift_detected=fdata.get("drift_detected", False),
-                        statistic=fdata.get("stattest_value", 0.0) or 0.0,
-                        p_value=fdata.get("drift_score", 1.0) or 1.0,
-                        method=fdata.get("stattest_name", "unknown"),
-                    ))
+            for fname, fdata in metric_data.get("drift_by_columns", {}).items():
+                if fname not in valid_cols:
+                    continue
+                feature_drifts.append(FeatureDrift(
+                    feature=fname,
+                    drift_detected=bool(fdata.get("drift_detected", False)),
+                    statistic=float(fdata.get("stattest_value") or 0.0),
+                    p_value=float(fdata.get("drift_score") or 1.0),
+                    method=str(fdata.get("stattest_name") or "evidently"),
+                ))
 
-        drift_share = n_drifted / max(len(self.feature_names), 1)
+        drift_share = n_drifted / max(len(valid_cols), 1)
+        dataset_drift = dataset_drift or (drift_share >= DRIFT_SHARE_THRESHOLD)
 
         trend = self._compute_trend(drift_share)
         result = DriftReport(
             dataset_drift=dataset_drift,
             n_drifted_features=n_drifted,
-            n_total_features=len(self.feature_names),
+            n_total_features=len(valid_cols),
             drift_share=drift_share,
             feature_drifts=feature_drifts,
             trend_direction=trend,

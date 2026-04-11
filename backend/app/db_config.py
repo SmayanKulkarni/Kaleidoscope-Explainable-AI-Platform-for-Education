@@ -57,9 +57,11 @@ def make_engine(store_name: str):
     if url.startswith("postgresql"):
         return create_engine(
             url,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,   # detect stale connections
+            pool_size=2,        # reduced — 5+ stores × 2 = ~10 total connections max
+            max_overflow=3,     # burst headroom
+            pool_pre_ping=True, # detect stale connections
+            pool_timeout=30,    # wait up to 30s for a connection
+            pool_recycle=300,   # recycle connections every 5 min
             echo=False,
         )
 

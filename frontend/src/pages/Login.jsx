@@ -40,15 +40,15 @@ export default function Login() {
         <h2 className="text-2xl font-bold mb-6">Sign In</h2>
 
         <div className="flex gap-2 mb-6">
-          <button type="button" onClick={() => fillDemo('demo_student', 'DemoStudent2026!')}
+          <button type="button" onClick={() => fillDemo('demo_student', 'student123')}
             className="flex-1 py-2 rounded-lg bg-surface-container border border-outline-variant/30 text-xs font-bold text-on-surface-variant hover:text-on-surface hover:border-outline-variant/60 transition-colors">
             Demo Student
           </button>
-          <button type="button" onClick={() => fillDemo('demo_instructor', 'DemoInstructor2026!')}
+          <button type="button" onClick={() => fillDemo('demo_instructor', 'instructor123')}
             className="flex-1 py-2 rounded-lg bg-surface-container border border-outline-variant/30 text-xs font-bold text-on-surface-variant hover:text-on-surface hover:border-outline-variant/60 transition-colors">
             Demo Instructor
           </button>
-          <button type="button" onClick={() => fillDemo('demo_admin', 'DemoAdmin2026!')}
+          <button type="button" onClick={() => fillDemo('demo_admin', 'admin123')}
             className="flex-1 py-2 rounded-lg bg-surface-container border border-outline-variant/30 text-xs font-bold text-on-surface-variant hover:text-on-surface hover:border-outline-variant/60 transition-colors">
             Demo Admin
           </button>

@@ -56,4 +56,20 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const ctx = useContext(AuthContext);
+  if (ctx) return ctx;
+
+  // Defensive fallback for rare HMR/provider timing glitches.
+  return {
+    user: null,
+    loading: false,
+    login: async () => {
+      throw new Error('Auth context unavailable. Please refresh the page.');
+    },
+    signup: async () => {
+      throw new Error('Auth context unavailable. Please refresh the page.');
+    },
+    logout: () => {},
+  };
+};

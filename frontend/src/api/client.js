@@ -5,7 +5,7 @@ import axios from 'axios';
 // For local dev via `npm run dev`, Vite's proxy rewrites /api → :8000, so
 // we also don't need an absolute URL there.
 // Override with VITE_API_URL only if the frontend is hosted separately.
-const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+const BASE_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? '/api' : '');
 
 
 export const client = axios.create({

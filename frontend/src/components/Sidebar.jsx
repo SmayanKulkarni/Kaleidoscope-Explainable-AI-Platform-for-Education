@@ -42,12 +42,12 @@ export default function Sidebar() {
       <div className="px-6 py-6 mb-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl overflow-hidden bg-primary-container ring-2 ring-primary/10">
-            <img 
-              alt="Profile Picture" 
-              className="w-full h-full object-cover" 
+            <img
+              alt="Profile Picture"
+              className="w-full h-full object-cover"
               src={user.role === 'student'
-                 ? "https://lh3.googleusercontent.com/aida-public/AB6AXuBpgsdRNMZgwLb0SjVMPPrbei3A3painjeRBU8A0NMx1E4MohVFu-LLHzne6lHEq2eXPwT2ecZqHfDwIHmI5sJytYzaupAgrk_Fv3pAL91uJs2xWqpKERu0FYIlC1MU70__oboeN-_GAB6OWE-x_xBlTdchD4kvNXc-5PyEFp1ww6-MtPwaQ0wnfkh-h2hc8XZcXIzbSQLSEIxP58-xDuhisi61DgO8aAqyvF-doWnvlTH6kKHtr85W8VFQSB751q2tgMlldd345-0"
-                 : "https://lh3.googleusercontent.com/aida-public/AB6AXuAfvkBGxakSQ1IbSsmxOs8mqCuwuNoDZkMlgJZV9TFE9M-xcH5aNXY8Bcd0CiyPB_k3C2YuOGssbMKy4wMJIPAQYGAkQT_3wscOVI2uOhMtT_pLjI-vD26Eu-GAjuVL-gS0nx4URrs1oveb31viLqKOUbBV5j9kuJChFFPNQrfVgju2R1q6UeG6E-fvl4NLOM51Ia-AfYc_cx-fCc8p0bw_n3cpRdz36bo-_VWnguNNH637QGTEwEG9uzOHU25IQwxYOCZ8HkftvDk"
+                ? "https://lh3.googleusercontent.com/aida-public/AB6AXuBpgsdRNMZgwLb0SjVMPPrbei3A3painjeRBU8A0NMx1E4MohVFu-LLHzne6lHEq2eXPwT2ecZqHfDwIHmI5sJytYzaupAgrk_Fv3pAL91uJs2xWqpKERu0FYIlC1MU70__oboeN-_GAB6OWE-x_xBlTdchD4kvNXc-5PyEFp1ww6-MtPwaQ0wnfkh-h2hc8XZcXIzbSQLSEIxP58-xDuhisi61DgO8aAqyvF-doWnvlTH6kKHtr85W8VFQSB751q2tgMlldd345-0"
+                : "https://lh3.googleusercontent.com/aida-public/AB6AXuAfvkBGxakSQ1IbSsmxOs8mqCuwuNoDZkMlgJZV9TFE9M-xcH5aNXY8Bcd0CiyPB_k3C2YuOGssbMKy4wMJIPAQYGAkQT_3wscOVI2uOhMtT_pLjI-vD26Eu-GAjuVL-gS0nx4URrs1oveb31viLqKOUbBV5j9kuJChFFPNQrfVgju2R1q6UeG6E-fvl4NLOM51Ia-AfYc_cx-fCc8p0bw_n3cpRdz36bo-_VWnguNNH637QGTEwEG9uzOHU25IQwxYOCZ8HkftvDk"
               }
             />
           </div>
@@ -57,21 +57,20 @@ export default function Sidebar() {
           </div>
         </div>
       </div>
-      
+
       <nav className="flex-1">
         {links.map((v) => {
           const isActive = pathname === v.to;
           return (
             <button
               key={v.to}
-              onClick={() => { if(!v.locked) navigate(v.to); }}
-              className={`w-full text-left py-3 px-6 flex items-center gap-3 font-label text-sm transition-all ${
-                isActive 
-                  ? 'text-blue-800 font-bold bg-surface-container-lowest rounded-r-full' 
+              onClick={() => { if (!v.locked) navigate(v.to); }}
+              className={`w-full text-left py-3 px-6 flex items-center gap-3 font-label text-sm transition-all ${isActive
+                  ? 'text-blue-800 font-bold bg-surface-container-lowest rounded-r-full'
                   : `text-slate-600 hover:bg-blue-50 ${v.locked ? 'opacity-50 cursor-not-allowed' : ''}`
-              }`}
+                }`}
             >
-              <span className={`material-symbols-outlined ${isActive ? 'fill-current' : ''}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "'FILL' 0" }}>{v.icon}</span> 
+              <span className={`material-symbols-outlined ${isActive ? 'fill-current' : ''}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "'FILL' 0" }}>{v.icon}</span>
               {v.label} {v.locked && <span className="material-symbols-outlined text-[14px]">lock</span>}
             </button>
           )
@@ -97,10 +96,10 @@ export default function Sidebar() {
 
       <div className="border-t border-outline-variant/10 mt-auto pb-8">
         <a className="text-slate-600 hover:bg-blue-50 py-3 px-6 flex items-center gap-3 font-label text-sm transition-all" href="#">
-            <span className="material-symbols-outlined">settings</span> Settings
+          <span className="material-symbols-outlined">settings</span> Settings
         </a>
         <a className="text-slate-600 hover:bg-blue-50 py-3 px-6 flex items-center gap-3 font-label text-sm transition-all" href="#">
-            <span className="material-symbols-outlined">help_outline</span> Support
+          <span className="material-symbols-outlined">help_outline</span> Support
         </a>
       </div>
     </aside>

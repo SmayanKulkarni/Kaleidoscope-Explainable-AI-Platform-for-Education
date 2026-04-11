@@ -33,6 +33,20 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 
+# Load .env file for GROQ_API_KEY and other secrets
+try:
+    from dotenv import load_dotenv
+    # Load from project root (parents[2] from backend/app/main.py)
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+        log_env = logging.getLogger(__name__)
+        log_env.info("Loaded .env from %s", env_path)
+    else:
+        load_dotenv()  # fallback to cwd
+except ImportError:
+    pass  # python-dotenv not installed, rely on actual env vars
+
 import numpy as np
 import pandas as pd
 import torch
@@ -1241,7 +1255,53 @@ def mlops_metrics():
     result = {}
     if summary_path.exists():
         with open(summary_path) as f:
-            result["training"] = json.load(f)
+            raw = json.load(f)
+        # Flatten GBM sub-dict to the keys the dashboard StatCards expect.
+        # training_summary.json stores metrics under {"gbm": {"test_auc_roc": ...}}
+        gbm = raw.get("gbm", {})
+
+        # Compute SHAP fidelity on-the-fly if not in the summary file.
+        shap_fidelity = raw.get("shap_fidelity")
+        if shap_fidelity is None and not hasattr(state, "_cached_shap_fidelity"):
+            try:
+                if (
+                    state.shap_explainer is not None
+                    and state.gbm_model is not None
+                    and state.X_train is not None
+                ):
+                    import numpy as _np
+                    sample_size = min(200, len(state.X_train))
+                    X_sample = state.X_train[:sample_size]
+                    explainer = state.shap_explainer._explainer
+                    shap_vals = explainer.shap_values(X_sample)
+                    base = explainer.expected_value
+                    if isinstance(base, list):
+                        base = base[1]  # binary classification: positive class
+                    if isinstance(shap_vals, list):
+                        shap_vals = shap_vals[1]
+                    predicted = state.gbm_model.predict_proba(X_sample)[:, 1]
+                    reconstructed = shap_vals.sum(axis=1) + base
+                    # Apply sigmoid if SHAP values are in log-odds space
+                    if reconstructed.max() > 1.5 or reconstructed.min() < -0.5:
+                        reconstructed = 1 / (1 + _np.exp(-reconstructed))
+                    fidelity = 1.0 - float(_np.mean(_np.abs(predicted - reconstructed)))
+                    state._cached_shap_fidelity = round(max(0.0, min(1.0, fidelity)), 4)
+                    log.info("Computed SHAP fidelity on-the-fly: %.4f", state._cached_shap_fidelity)
+            except Exception as e:
+                log.warning("SHAP fidelity computation failed: %s", e)
+                state._cached_shap_fidelity = None
+        if shap_fidelity is None:
+            shap_fidelity = getattr(state, "_cached_shap_fidelity", None)
+
+        result["training"] = {
+            "auc":           gbm.get("test_auc_roc"),
+            "f1":            gbm.get("test_f1"),
+            "brier":         gbm.get("test_brier_score"),
+            "avg_precision": gbm.get("test_avg_precision"),
+            "shap_fidelity": shap_fidelity,
+            "gbm":           gbm,
+            "rf":            raw.get("rf", {}),
+        }
     if tuning_path.exists():
         with open(tuning_path) as f:
             result["tuning"] = json.load(f)
@@ -1635,6 +1695,150 @@ def causal_graph():
     if not annotator_available:
         payload["message"] = "Causal annotator not initialised; returning static DAG"
     return payload
+
+
+# ── /causal/explain ───────────────────────────────────────────────────────
+
+_CAUSAL_EXPLAIN_SYSTEM_PROMPT = """
+You are an expert in causal inference and educational data mining, narrating
+a pre-computed Causal DAG for a school administrator viewing an XAI dashboard.
+
+STRICT RULES:
+- ONLY describe what is present in the data payload. Never invent numbers.
+- Use the ATE (Average Treatment Effect) values exactly as given.
+- Explain in plain language that a non-technical school admin can understand.
+- Return a JSON object with EXACTLY these 3 fields, no markdown wrapper:
+    "summary"          : 2-3 sentence high-level overview of what the DAG reveals
+                         about dropout risk factors and their causal relationships.
+    "key_insights"     : list of 3-5 bullet-point strings, each one specific insight
+                         drawn from the graph structure and ATE values.
+    "strongest_drivers": list of objects with "feature", "ate", "direction", and
+                         "explanation" (1-sentence plain-language interpretation).
+                         Include only features where is_causal=true, sorted by |ATE|.
+- Total response must be parseable JSON. No explanation outside the JSON.
+""".strip()
+
+_CAUSAL_EXPLAIN_USER_TEMPLATE = """
+Causal DAG Summary for the XAI Learning Analytics Dashboard:
+
+Node groups:
+- Confounders: prior context variables that influence both engagement and performance
+- Engagement: student activity and participation metrics
+- Performance: academic achievement indicators
+- Risk signals: early warning indicators
+- Outcome: the dropout_risk prediction target
+
+Nodes (feature → group, is_causal, ATE, direction):
+{nodes_text}
+
+Edge count: {edge_count} directed edges connecting the above nodes.
+
+Key edge patterns:
+- Confounders → Engagement, Performance, Outcome
+- Engagement → Performance, Risk signals, Outcome
+- Performance → Outcome
+- Risk signals → Outcome
+
+Narrate this causal structure for a school admin. Return JSON only.
+""".strip()
+
+
+@app.post("/causal/explain")
+def causal_explain():
+    """
+    Uses Groq LLM to narrate the Causal DAG in plain English.
+    Returns { summary, key_insights, strongest_drivers }.
+    """
+    # Get the graph data
+    graph = causal_graph()
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+
+    # Build structured fallback even without LLM
+    causal_nodes = [n for n in nodes if n.get("is_causal")]
+    strongest = sorted(causal_nodes, key=lambda n: abs(n.get("ate", 0)), reverse=True)
+
+    if state.llm_narrator is None or not state.llm_narrator.available:
+        # Generate a simple rule-based explanation as fallback
+        drivers = []
+        for n in strongest[:5]:
+            drivers.append({
+                "feature": n["label"],
+                "ate": n.get("ate", 0),
+                "direction": n.get("effect_direction", "neutral"),
+                "explanation": f"{n['label']} has a causal effect (ATE={n.get('ate', 0):.4f}) on dropout risk.",
+            })
+        return {
+            "summary": (
+                f"This causal graph models {len(nodes)} features connected by "
+                f"{len(edges)} directed edges, showing how student engagement, "
+                f"performance, and risk signals causally influence dropout risk. "
+                f"{len(causal_nodes)} features have statistically significant causal effects."
+            ),
+            "key_insights": [
+                f"{len(causal_nodes)} out of {len(nodes)} features show significant causal effects on dropout.",
+                "Engagement metrics (login frequency, forum posts) causally influence both performance and risk signals.",
+                "Performance metrics (quiz scores, submission rates) directly affect dropout risk.",
+                "Risk signals (days since activity, missed deadlines) are downstream of engagement and directly predict dropout.",
+            ],
+            "strongest_drivers": drivers,
+            "source": "fallback",
+        }
+
+    # Build LLM prompt
+    node_lines = []
+    for n in nodes:
+        node_lines.append(
+            f"  {n['label']} ({n['group']}): is_causal={n.get('is_causal', False)}, "
+            f"ATE={n.get('ate', 0):.6f}, direction={n.get('effect_direction', 'neutral')}"
+        )
+    nodes_text = "\n".join(node_lines)
+
+    user_prompt = _CAUSAL_EXPLAIN_USER_TEMPLATE.format(
+        nodes_text=nodes_text,
+        edge_count=len(edges),
+    )
+
+    try:
+        import json as _json
+        from groq import Groq as _Groq
+        _client = _Groq(api_key=state.llm_narrator.api_key)
+        _resp = _client.chat.completions.create(
+            model=state.llm_narrator.model,
+            messages=[
+                {"role": "system", "content": _CAUSAL_EXPLAIN_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature=0.3,
+            max_tokens=800,
+        )
+        raw = (_resp.choices[0].message.content or "{}").strip()
+        # Strip markdown fence if present
+        if raw.startswith("```"):
+            raw = "\n".join(raw.splitlines()[1:])
+            if raw.endswith("```"):
+                raw = raw[:-3].strip()
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+        parsed = _json.loads(raw)
+        parsed["source"] = "groq"
+        return parsed
+    except Exception as _e:
+        log.warning("causal_explain: Groq call failed (%s) — returning fallback", _e)
+        drivers = []
+        for n in strongest[:5]:
+            drivers.append({
+                "feature": n["label"],
+                "ate": n.get("ate", 0),
+                "direction": n.get("effect_direction", "neutral"),
+                "explanation": f"{n['label']} has a causal effect (ATE={n.get('ate', 0):.4f}) on dropout risk.",
+            })
+        return {
+            "summary": f"Causal graph with {len(nodes)} features and {len(edges)} edges. LLM narration unavailable.",
+            "key_insights": [f"{len(causal_nodes)} features show significant causal effects."],
+            "strongest_drivers": drivers,
+            "source": "fallback_error",
+        }
 
 
 # ── /fairness/explain ─────────────────────────────────────────────────────
