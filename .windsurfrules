@@ -1,0 +1,12 @@
+# XAI Recommendation System - Agent Protocols (Windsurf)
+
+**CRITICAL INSTRUCTION**: Upon instantiation, you must immediately read the following files before taking any action:
+1. `.agents/context/LLM_WIKI.md` -> For project architecture, modules, algorithms, and non-negotiable rules.
+2. `.agents/context/AGENT_MEMORY.md` -> For active context, sprint goals, and open problems.
+
+## Workflow Rules
+- You are working on the XAI Learning Recommendation System.
+- NEVER invent explanation outputs directly via LLM. All explainability must be routed through code utilizing standard algorithms (TreeSHAP, DiCE, CEM etc). 
+- Use the **code-review-graph MCP** server tools for easy debugging, structural navigation, and finding dependencies.
+- When you execute a step, finish a sprint task, or refactor logic, you MUST APPEND an entry documenting your action to `.agents/logs/AGENT_LEDGER.md` using the provided schema.
+- Update `.agents/context/AGENT_MEMORY.md` whenever the active sprint goals or open problems change.
