@@ -155,7 +155,8 @@
 ### [2026-04-11 16:45] Cascade — Phase 4: Implicit Feedback Integration + Two-Stage Model
 
 - **Files Created (6 modules):**
-  - ackend/app/tracker/event_store.py — SQLAlchemy model for interaction_events; ecord_batch, get_learner_events, get_all_learner_ids, count API.
+  - ackend/app/tracker/event_store.py — SQLAlchemy model for interaction_events; 
+ecord_batch, get_learner_events, get_all_learner_ids, count API.
   - ackend/app/tracker/event_schemas.py — Pydantic EventPayload (Literal event_type enum), EventBatchRequest (min_length=1, max_length=500), EventBatchResponse.
   - ackend/app/model/implicit_aggregator.py — ImplicitAggregator computes 15 implicit + 5 explicit = 20 engagement signals per learner from raw events + feedback; 	o_matrix() for batch encoding.
   - ackend/app/model/engagement_model.py — Denoising autoencoder (PyTorch): 20→64→32→3→32→64→20; it(), encode(), encode_learner(), save()/load(); cold-start rows (all-zero) → zero latent.
@@ -164,7 +165,8 @@
 - **Files Modified:**
   - ackend/app/causal/causal_annotator.py — LATENT_PREFIX = "engagement_latent_"; estimate_single_effect short-circuits for latent features (returns is_causal=False, pointbiserial correlation); nnotate_shap labels them "correlational".
   - ackend/app/explainers/dice_explainer.py — IMMUTABLE_FEATURES extended with engagement_latent_1/2/3.
-  - ackend/app/prescriptor/action_ranker.py — _non_actionable list includes all 3 latent features; ank() skips them.
+  - ackend/app/prescriptor/action_ranker.py — _non_actionable list includes all 3 latent features; 
+ank() skips them.
   - ackend/app/main.py — LearnerFeatures adds 3 optional latent fields (default=0.0); AppState adds event_store; lifespan initialises EventStore; new endpoints: POST /events, GET /events/{learner_id}, POST /mlops/retrain, POST /mlops/reload.
   - data/fixtures/high_risk.json, medium_risk.json, low_risk.json — all include latent features at 0.0.
 - **Tests:** None in this session (tests added in next session).
@@ -194,26 +196,32 @@
 - **Files Created:**
   - ackend/app/model/s3_loader.py — download_models(models_dir): downloads 7 top-level files + engagement/ dir from S3 at startup; skips existing files. upload_models(models_dir): uploads after retrain. model_version_on_s3(). All no-ops when AWS_S3_BUCKET unset. Lazy boto3 import.
 - **Files Modified:**
-  - ackend/app/main.py — download_models(MODELS_DIR) called at top of lifespan() before model load. upload_models(MODELS_DIR) called in /mlops/retrain on esult.success.
+  - ackend/app/main.py — download_models(MODELS_DIR) called at top of lifespan() before model load. upload_models(MODELS_DIR) called in /mlops/retrain on 
+esult.success.
 
 #### 5D — Terraform Infrastructure as Code
 - **Files Created (infra/):**
   - main.tf — AWS provider ~5.x, S3 remote state backend (xai-rec-tf-state bucket + DynamoDB lock).
   - ariables.tf — All vars: region, project_name, ec2 instance type/AMI, SSH key path, allowed SSH CIDR, RDS class/name/user/password/storage, S3 suffix.
-  - pc.tf — Uses default VPC; SG pi (80/443/8000/22 inbound); SG ds (5432 from api SG only).
+  - pc.tf — Uses default VPC; SG pi (80/443/8000/22 inbound); SG 
+ds (5432 from api SG only).
   - ecr.tf — ECR repo (mutable tags, scan on push) + lifecycle policy (keep 5 images).
   - s3.tf — Versioned, encrypted, private S3 bucket; lifecycle: expire noncurrent versions after 30 days.
   - ec2.tf — t3.micro + 20GB gp3 root; IAM role with ECR pull + S3 r/w policy; instance profile; user_data from template; create_before_destroy lifecycle.
-  - ds.tf — postgres 16.3, db.t3.micro, gp2, encrypted, single-AZ, 7-day backup, Performance Insights (7d free).
-  - outputs.tf — ec2_public_ip, ec2_public_dns, ecr_repo_url, ds_endpoint, database_url (sensitive), s3_bucket_name, pi_url.
+  - 
+ds.tf — postgres 16.3, db.t3.micro, gp2, encrypted, single-AZ, 7-day backup, Performance Insights (7d free).
+  - outputs.tf — ec2_public_ip, ec2_public_dns, ecr_repo_url, 
+ds_endpoint, database_url (sensitive), s3_bucket_name, pi_url.
   - userdata.sh.tpl — Amazon Linux 2023: installs Docker + AWS CLI; writes /opt/xai/.env; creates xai-api.service systemd unit (ECR login → pull → docker run).
   - 	erraform.tfvars.example — Filled template with all variables documented.
 
 #### 5E — GitHub Actions CI/CD
 - **Files Created (.github/workflows/):**
-  - ci.yml — Runs on push/PR. Postgres service container. Installs equirements.txt + ruff + pytest. Lint (ruff) → pytest. Uploads XML results artifact.
+  - ci.yml — Runs on push/PR. Postgres service container. Installs 
+equirements.txt + ruff + pytest. Lint (ruff) → pytest. Uploads XML results artifact.
   - deploy.yml — Runs on push to main. Steps: checkout → AWS creds → ECR login → build+push (with layer cache) → SSH: write env file → pull image → **docker run alembic upgrade head** → systemctl restart xai-api → 12×10s health check loop.
-  - etrain.yml — Manual (workflow_dispatch with min_events + orce_reload inputs) + weekly schedule (Sunday 02:00 UTC). Calls /mlops/retrain → parses success field → if true: /mlops/reload → health check. Posts full summary to GitHub step summary.
+  - 
+etrain.yml — Manual (workflow_dispatch with min_events + orce_reload inputs) + weekly schedule (Sunday 02:00 UTC). Calls /mlops/retrain → parses success field → if true: /mlops/reload → health check. Posts full summary to GitHub step summary.
   - 	erraform.yml — Runs on infra/** changes. Plan on PR (posts diff as comment via ctions/github-script). Apply on push to main. Captures outputs (hides database_url). Needs DB_PASSWORD secret.
 
 #### 5F — Database Migrations (Alembic)
@@ -237,7 +245,8 @@
 
 #### 5H — Docs & Config
 - **Files Modified:**
-  - equirements.txt — Added psycopg2-binary>=2.9.9, oto3>=1.34.0, lembic>=1.13.0.
+  - 
+equirements.txt — Added psycopg2-binary>=2.9.9, oto3>=1.34.0, lembic>=1.13.0.
   - .gitignore — Added Terraform state patterns (infra/.terraform/, *.tfstate, 	erraform.tfvars, etc.).
   - README.md — Full rewrite: quick start, docker-compose, local dev, AWS deployment steps, Terraform bootstrap, GitHub Secrets table (11 secrets), migration instructions, CI/CD table, architecture diagram, env vars reference.
 - **Files Created:**
@@ -278,4 +287,11 @@ _simulations (default 1000, max 10_000).
 - 	ests/test_prediction_logger.py (8 tests) — log, count, get_recent fields/ordering, get_feature_matrix, prune on max_rows, default constructor via db_config.
 
 - **Total test count: 47/47 passing.**
+
+### [2026-04-11 18:50] GitHub Copilot (GPT-5.3-Codex) - Stress Test Validation Fix and Full Re-run
+- **Files Modified:** `backend/app/tracker/event_schemas.py`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Added event-type alias normalization in the `/events` request schema so API accepts both frontend aliases and canonical event names (`whatif_interaction`→`whatif_slider`, `action_view`→`action_viewed`, `action_dismiss`→`action_dismissed`, `focus_start`→`session_start`, `focus_end`→`session_end`). Re-ran full stress suite in conda env `astro`.
+- **Why it was done:** Stress suite had one failing edge-case test due to 422 validation mismatch for alias event types.
+- **Human-in-the-loop:** Applied direct user request to fix failure and run complete stress test again.
+- **Dependencies/Impacts:** `/events` endpoint is now more tolerant of client event naming variance while preserving canonical stored values for downstream implicit aggregation features.
 

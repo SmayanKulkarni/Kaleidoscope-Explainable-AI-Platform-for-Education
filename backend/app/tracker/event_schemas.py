@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # All valid event types the frontend may emit
 EventType = Literal[
@@ -34,6 +34,21 @@ class EventPayload(BaseModel):
     page:         Optional[str]   = None
     extra:        Optional[Any]   = None   # arbitrary JSON metadata
     client_ts:    Optional[str]   = None   # ISO-8601 from browser
+
+    @field_validator("event_type", mode="before")
+    @classmethod
+    def normalize_event_type_aliases(cls, v: str) -> str:
+        # Accept common frontend aliases and map to canonical event names
+        alias_map = {
+            "whatif_interaction": "whatif_slider",
+            "action_view": "action_viewed",
+            "action_dismiss": "action_dismissed",
+            "focus_start": "session_start",
+            "focus_end": "session_end",
+        }
+        if isinstance(v, str):
+            return alias_map.get(v, v)
+        return v
 
 
 class EventBatchRequest(BaseModel):

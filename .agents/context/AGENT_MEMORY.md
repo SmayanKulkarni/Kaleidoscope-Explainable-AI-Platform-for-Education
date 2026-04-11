@@ -16,6 +16,7 @@
 - **Phase 1-3 Backend:** COMPLETE — GBM, RF, LSTM, full XAI stack, MLOps.
 - **Phase 4 Implicit Feedback:** COMPLETE — engagement autoencoder, retrain pipeline, hot-reload.
 - **Phase 5 Deployment:** COMPLETE — Docker, PostgreSQL migration, S3, Terraform, GitHub Actions, Alembic, test suite.
+- **Stress Testing:** COMPLETE in `astro` env for `tests/test_stress.py` after event alias compatibility fix (25/25 pass).
 
 ### Architecture Summary
 - **Models:** GBM (primary), RF (comparison), LSTM (temporal), EngagementAutoencoder (implicit → latent).
