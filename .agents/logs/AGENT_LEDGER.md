@@ -105,10 +105,47 @@
 - **What was done:** Instantiated Git LFS locally for ML artifacts (`*.csv`, `*.pkl`, `*.bin`, etc.). Evaluated the repository block due to the 432MB `studentVle.csv` blob, successfully executed an aggressive rewrite (`git lfs migrate import --everything`) converting historical Blobs into LFS pointers, and executed a clean `git push --force` upstream.
 - **Why it was done:** GitHub enforces strict 100MB thresholds on standard blobs; without LFS rewriting, the historical presence of the raw OULAD tables blocked `push`.
 - **Dependencies/Impacts:** To consume datasets or models locally, future developers/agents **must** possess `git-lfs` (i.e. `git lfs pull` to resolve tracking pointers).
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+
+### [2026-04-11 15:45] Cascade — Phase 2 XAI Engine + Phase 2A MLOps Full Implementation
+
+- **Files Created (15 modules):**
+  - `backend/app/explainers/dice_explainer.py` — DiCE counterfactuals; permitted ranges from data percentiles; immutable feature locking.
+  - `backend/app/explainers/anchors_explainer.py` — alibi AnchorTabular; quartile discretiser; precision/coverage metrics.
+  - `backend/app/explainers/prototype_explainer.py` — cosine k-NN on StandardScaler space; motivational narrative.
+  - `backend/app/explainers/archipelago.py` — SHAP interaction values; top-k off-diagonal pairs; amplifying/dampening labels.
+  - `backend/app/evaluator/uncertainty_estimator.py` — MAPIE v1 SplitConformalClassifier; conformalize() API; robust shape handling.
+  - `backend/app/evaluator/trust_scorer.py` — composite trust (0.40×fidelity + 0.35×stability + 0.25×completeness).
+  - `backend/app/causal/causal_annotator.py` — DoWhy CausalModel per feature; backdoor.linear_regression; random_common_cause refutation; point-biserial fallback; annotate_shap().
+  - `backend/app/prescriptor/action_ranker.py` — IQR-derived actionability; DoWhy causal weights; priority_score composite.
+  - `backend/app/tracker/consistency_store.py` — SQLAlchemy/SQLite explanation persistence.
+  - `backend/app/tracker/drift_detector.py` — JSD on |SHAP| softmax; top-3 rank shift; mild/severe flags.
+  - `backend/app/mlops/experiment_tracker.py` — MLflow wrapper; run logging; best run query.
+  - `backend/app/mlops/model_registry.py` — MLflow MlflowClient; promote/rollback/load_production_model.
+  - `backend/app/mlops/prediction_logger.py` — SQLite rolling log; auto-prune; get_feature_matrix() for Evidently.
+  - `backend/app/mlops/drift_monitor.py` — Evidently DataDriftPreset; lazy import (avoids litestar crash); 1h TTL cache.
+  - `backend/app/mlops/model_card.py` — auto-generates MODEL_CARD.md from JSON training artifacts.
+- **Files Modified:**
+  - `backend/app/main.py` — AppState extended; lifespan loads all 15 modules; /predict adds MAPIE uncertainty + background logging; /explain fully wired (all 9 XAI modules); /counterfactual, /history, /mlops/* all implemented.
+  - `backend/app/explainers/shap_explainer.py` — CalibratedClassifierCV unwrap for TreeSHAP compatibility.
+- **Bugs Fixed:**
+  - CalibratedClassifierCV rejected by TreeSHAP → extract raw base estimator.
+  - MAPIE v1 renamed MapieClassifier → SplitConformalClassifier; fit() → conformalize(); predict_set() for sets.
+  - pred_sets shape (1D/2D/3D) made robust.
+  - BackgroundTasks default=None invalid for FastAPI DI → always injected.
+  - Evidently import chain crash (litestar/multipart) → lazy import inside check_drift().
+  - numpy pickle version mismatch → re-ran trainer.py.
+- **Verified:** All 15 modules import OK. Server healthy on CUDA. /predict, /explain (all 9 keys present), /history, /mlops/* return correct JSON.
+
+### [2026-04-11 16:10] GitHub Copilot (GPT-5.3-Codex) - Implementation Plan Frontend Scope Removal
+- **Files Modified:** `files/IMPLEMENTATION_PLAN.md`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Removed frontend build/setup/tasks/checklist items from the implementation plan, replaced Phase 4 with backend integration support for API-contract freeze and fixture handoff, and normalized Docker planning to backend-only services.
+- **Why it was done:** Frontend execution has been split to a different team; this plan now reflects backend/data/ML ownership only.
+- **Human-in-the-loop:** Applied explicit user direction to de-scope frontend while preserving backend endpoints and handoff artifacts for cross-team integration.
+- **Dependencies/Impacts:** Backend milestones and acceptance criteria now exclude UI deliverables. Frontend teams should consume API fixtures/spec from `files/API_SPEC.md` and handoff payloads.
+
+### [2026-04-11 16:18] GitHub Copilot (GPT-5.3-Codex) - Model Artifact Tracking for GitHub Push
+- **Files Modified:** `.gitignore`, `models/gbm.pkl`, `models/rf.pkl`, `models/lstm.pt`, `models/lstm_config.json`, `models/training_summary.json`, `models/tuning_summary.json`, `.agents/logs/AGENT_LEDGER.md`, `.agents/context/AGENT_MEMORY.md`
+- **What was done:** Removed `models/` from ignore rules so model artifacts can be versioned, then prepared model binaries/config summaries for commit and push.
+- **Why it was done:** User requested publishing trained model artifacts to GitHub.
+- **Human-in-the-loop:** Applied direct user instruction to include model files in repository history.
+- **Dependencies/Impacts:** Future clones can retrieve model files via Git LFS pointers for `.pt` and `.pkl`; deployment scripts can reference committed `models/` artifacts.

@@ -31,6 +31,8 @@
 
 ## Active Context
 - **Status:** Data pipeline + temporal pipeline complete. Implementation plan finalized with trimmed XAI stack.
+- **Scope Update:** Frontend implementation is now owned by a separate team; this code stream is backend/data/ML + API-contract handoff only.
+- **Repo Update:** `models/` is now tracked in Git (no longer ignored) so trained artifacts can be pushed to GitHub.
 - **Data (static):** `data/learners.csv` (32,593 rows), `data/train.pkl` (26,074), `data/test.pkl` (6,519). Dropout rate 31.2%. Zero NaNs.
 - **Data (temporal):** `data/temporal/snapshots.pkl` (195,558 rows = 32,593 students × 6 snapshots @ weeks 2,4,6,8,10,12). `data/temporal/transitions.pkl` (162,965 transition rows across 5 week-pairs for Monte Carlo).
 - **Feature source:** `backend/app/model/data_loader.py` (static), `backend/app/model/temporal_builder.py` (temporal + MC simulator).
@@ -79,7 +81,8 @@
   2. **Task 1.1b** — LSTM Trainer (`backend/app/model/lstm_trainer.py`)
   3. **Task 1.2** — Dual SHAP Explainer (TreeSHAP + DeepSHAP)
   4. **Task 1.3** — FastAPI base + `/predict` endpoint
-  5. **Task M.1** — MLflow experiment tracking setup
+  5. **Task 4.x** — API contract freeze + frontend handoff fixtures (`files/API_SPEC.md`, `data/`)
+  6. **Task M.1** — MLflow experiment tracking setup
 
 ## Architectural Constraints (Strict)
 - **Do not use LLMs for prediction or explanation generation.** LLM is strictly for narration of pre-computed XAI payloads.
