@@ -71,9 +71,6 @@ cd mc_simulator && maturin develop --release
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-# Frontend
-npx create-react-app frontend --template typescript
-cd frontend && npm install recharts tailwindcss @headlessui/react axios
 ```
 
 <<<<<<< HEAD
@@ -886,212 +883,38 @@ Copilot prompt:
 
 ---
 
-## Phase 4 — Frontend What-If UI (Hours 11–16)
-=======
-## Phase 4 — Frontend (Hours 10–16)
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-## Phase 4 — Frontend (Hours 10–16)
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-## Phase 4 — Frontend (Hours 10–16)
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+## Phase 4 — Backend Integration Support (Hours 10–16)
 
-**Goal:** Interactive React dashboard with real model feedback
+**Goal:** Finalize backend contracts and artifacts for frontend handoff (frontend is out of scope for this plan)
 
 ---
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-### Task 4.1 — What-If Panel (Most Critical UI)
-**File:** `frontend/src/components/WhatIfPanel.jsx`
-
-Copilot prompt:
-> "React component with 12 sliders (one per learner feature) using Tailwind.
-> On any slider change: debounce 300ms → POST /whatif with full modified features →
-> re-render: risk score badge, SHAP bar chart (Recharts), DiCE counterfactual list.
-> Show BEFORE vs AFTER side-by-side. Risk badge: green (LOW) / yellow (MEDIUM) / red (HIGH).
-> FastSHAP values update the bar chart in real-time."
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-### Task 4.1 — What-If Panel
-**File:** `frontend/src/components/WhatIfPanel.jsx`
+### Task 4.1 — API Contract Freeze
+**Files:** `backend/app/main.py`, `files/API_SPEC.md`
 **Status:** Pending
 
-> 12 sliders (one per feature) using Tailwind.
-> On slider change: debounce 300ms → `POST /whatif` → re-render risk badge + SHAP bar chart.
-> BEFORE vs AFTER side-by-side. Risk badge: green/yellow/red.
-> TreeSHAP values update the bar chart (no FastSHAP needed — TreeSHAP is fast enough).
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+> Lock request/response schemas for `/predict`, `/explain`, `/whatif`, `/counterfactual`, `/history/{learner_id}`, and MLOps endpoints.
+> Ensure examples are current and include error payload formats.
 
 ---
 
-### Task 4.2 — Explanation Card
-**File:** `frontend/src/components/ExplanationCard.jsx`
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-Copilot prompt:
-> "Explanation card component with sections:
-> 1. Prediction badge + trust score bar
-> 2. Top-3 SHAP features (horizontal bar chart, positive=red/negative=green)
-> 3. Anchor rule text in monospace box
-> 4. Prototype match ('Similar to 2 learners who completed')
-> 5. Interaction highlight ('⚠️ Low quiz scores + high inactivity amplify each other')
-> 6. LLM narration text (audience-appropriate)"
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+### Task 4.2 — Frontend Handoff Fixtures
+**Files:** `data/`, `files/CHEATSHEET.md`
 **Status:** Pending
 
-> Sections:
-> 1. Prediction badge + trust score bar
-> 2. Top-3 SHAP features (horizontal bar chart, pos=red / neg=green)
-> 3. Anchor rule in monospace box (instructor view)
-> 4. Prototype match ("Similar to 2 learners who completed")
-> 5. Interaction highlight ("⚠️ Low quiz scores + high inactivity amplify each other")
-> 6. LLM narration text (audience-toggled)
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+> Provide stable sample payloads and mocked responses for UI teams:
+> - high-risk learner
+> - medium-risk learner
+> - low-risk learner
+> - temporal sequence sample (for LSTM)
 
 ---
 
-### Task 4.3 — Audience Toggle
-**File:** `frontend/src/components/AudienceToggle.jsx`
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-Copilot prompt:
-> "Toggle button switching between 'Learner View' and 'Instructor View'.
-> Learner view: motivational language, large risk badge, prototype narrative, top action.
-> Instructor view: feature breakdown table, SHAP waterfall, model confidence, anchor rule,
-> causal vs correlational annotations, trust score details."
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+### Task 4.3 — Backend Latency + Reliability Checks
+**Files:** `backend/app/main.py`, `tests/`
 **Status:** Pending
 
-> Toggle: 'Learner View' / 'Instructor View'.
-> - Learner: motivational LLM text, risk badge, prototype narrative, top action card.
-> - Instructor: SHAP waterfall, anchor rule, causal annotations, trust details, interaction table.
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-
----
-
-### Task 4.4 — Counterfactual View
-**File:** `frontend/src/components/CounterfactualView.jsx`
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-Copilot prompt:
-> "Display DiCE counterfactual results as action cards.
-> Each card: feature name, current → target value (animated arrow), estimated impact bar,
-> plain language instruction, causal badge (🔗 Causal | 〰️ Correlated).
-> Ranked by priority. Add 'Apply This Change' button that pre-fills What-If sliders."
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-**Status:** Pending
-
-> DiCE action cards. Each: feature name, current → target, impact bar, plain language,
-> causal badge. 'Apply This Change' button pre-fills What-If sliders.
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-
----
-
-### Task 4.5 — Consistency Timeline
-**File:** `frontend/src/components/ConsistencyTimeline.jsx`
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-
-Copilot prompt:
-> "Time-series line chart (Recharts LineChart) showing top-3 SHAP feature values over
-> sessions for a learner. X-axis: session dates. Y-axis: SHAP value magnitude.
-> Red vertical marker when drift_detected=true. Tooltip shows full top-3 at each point."
-
----
-
-## Phase 5 — Brownie Points (Hours 16–20)
-
-**Goal:** Causal DAG, Multi-Model, Drift alerts, Human-in-the-Loop
-
----
-
-### Task 5.1 — Causal DAG Visualization
-**File:** `frontend/src/components/CausalDAG.jsx`
-
-Copilot prompt:
-> "Render the learner causal DAG as an SVG using d3-force or react-flow.
-> Nodes: feature names. Edges: causal relationships from CausalAnnotator.
-> Color nodes: blue (causal path to dropout), grey (correlational).
-> Hovering a node shows its causal effect estimate from DoWhy."
-
----
-
-### Task 5.2 — Multi-Model Disagreement Panel
-**File:** `frontend/src/components/ModelComparison.jsx`
-
-Copilot prompt:
-> "Run both GBM and RF models on the same learner. Show:
-> - Prediction agreement badge: ✅ Agree | ⚠️ Disagree
-> - Side-by-side SHAP bar charts
-> - Feature rank disagreement: highlight features where GBM rank ≠ RF rank by >2 positions"
-
----
-
-### Task 5.3 — Human-in-the-Loop Feedback
-**File:** `backend/app/tracker/feedback_store.py`
-
-Copilot prompt:
-> "POST /feedback endpoint accepting: learner_id, explanation_id, rating (1-5),
-> followed_recommendation (bool), correction ({feature, suggested_value}).
-> Store in FeedbackRecord SQLite table. GET /feedback/stats returns aggregate
-> recommendation_follow_rate, avg_rating per feature."
-=======
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-**Status:** Pending
-
-> Recharts LineChart: top-3 SHAP over sessions. Red marker on drift. Tooltip at each point.
+> Add regression checks for endpoint latency, payload validation, and fallback behavior when optional explainers are unavailable.
 
 ---
 
@@ -1173,42 +996,12 @@ class DLExplainer:
 
 ---
 
-### Task 5.3 — Causal DAG Visualization
-**File:** `frontend/src/components/CausalDAG.jsx`
-
-> SVG DAG using react-flow. Nodes = features, edges = causal relations.
-> Blue nodes = causal path to dropout, grey = correlational.
-
----
-
-### Task 5.4 — Multi-Model Comparison (GBM vs LSTM)
-**File:** `frontend/src/components/ModelComparison.jsx`
-
-> GBM (static) vs LSTM (temporal) on same learner. Shows:
-> - Agreement/disagreement badge
-> - Side-by-side SHAP charts (TreeSHAP vs DeepSHAP)
-> - LSTM temporal heatmap: 6 weeks × 12 features attribution grid
-> - Rank disagreement highlights
-
----
-
-### Task 5.5 — Human-in-the-Loop Feedback
+### Task 5.3 — Human-in-the-Loop Feedback
 **File:** `backend/app/tracker/feedback_store.py`
 
 > `POST /feedback`: learner_id, explanation_id, rating (1-5), followed_recommendation, correction.
 > `GET /feedback/stats`: aggregate follow rate + avg rating per feature.
 > Feedback data feeds into MLOps concept drift detection (Task M.3).
-
----
-
-### Task 5.6 — Temporal Trajectory Visualization
-**File:** `frontend/src/components/TemporalTrajectory.jsx`
-**Status:** Pending
-
-> Line chart showing feature evolution over weeks 2–12 for a student.
-> Overlay MC simulation confidence band (10th–90th percentile projections).
-> Red shading when projected dropout probability > 50%.
-> Tooltip shows DeepSHAP attribution at each time point.
 <<<<<<< HEAD
 <<<<<<< HEAD
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
@@ -1275,28 +1068,12 @@ print(explanation.top_action)
 ---
 
 ### Task 6.2 — Docker Setup
-**Files:** `Dockerfile.backend`, `Dockerfile.frontend`, `docker-compose.yml`
+**Files:** `Dockerfile.backend`, `docker-compose.yml`
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 Copilot prompt:
 > "Create multi-stage Dockerfile for FastAPI backend (python:3.11-slim).
-> Dockerfile for React frontend (node:18-alpine + nginx).
-> docker-compose.yml with backend (port 8000), frontend (port 3000), both with
-> health checks. Backend env vars: MODEL_PATH, DB_URL, ANTHROPIC_API_KEY."
-=======
-> Backend: python:3.11-slim + FastAPI. Frontend: node:18-alpine + nginx.
-> docker-compose with health checks. Env: MODEL_PATH, DB_URL, GROQ_API_KEY.
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-> Backend: python:3.11-slim + FastAPI. Frontend: node:18-alpine + nginx.
-> docker-compose with health checks. Env: MODEL_PATH, DB_URL, GROQ_API_KEY.
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
-=======
-> Backend: python:3.11-slim + FastAPI. Frontend: node:18-alpine + nginx.
-> docker-compose with health checks. Env: MODEL_PATH, DB_URL, GROQ_API_KEY.
->>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+> docker-compose.yml for backend services with health checks.
+> Backend env vars: MODEL_PATH, DB_URL, GROQ_API_KEY."
 
 ---
 
@@ -1357,9 +1134,7 @@ def test_full_pipeline():
 □ POST /whatif uses actual model.predict_proba (verified in test)
 □ POST /counterfactual returns human-readable actions, no hard-coding
 □ GET /history/{id} returns top-3 timeline with drift flags
-□ Frontend: learner/instructor toggle works
-□ Frontend: What-If sliders update SHAP chart in real-time
-□ Docker: docker-compose up serves both services
+□ Docker: docker-compose up serves backend services
 □ GET /health returns 200
 □ SDK installable: pip install -e backend/sdk
 =======
@@ -1396,10 +1171,6 @@ def test_full_pipeline():
 □ GET /history/{id} returns timeline + drift flags
 □ GET /mlops/health returns model version + drift status
 □ GET /mlops/drift-report returns Evidently report
-□ Frontend: learner/instructor toggle
-□ Frontend: What-If sliders update SHAP chart
-□ Frontend: Temporal trajectory + MC confidence band
-□ Frontend: GBM vs LSTM comparison view
 □ MLflow UI accessible at :5000
 □ Docker: docker-compose up works
 □ GET /health returns 200
