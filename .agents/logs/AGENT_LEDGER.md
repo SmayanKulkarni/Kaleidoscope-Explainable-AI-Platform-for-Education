@@ -508,3 +508,29 @@ POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_
 - `backend/app/explainers/shap_explainer.py`
 - `backend/app/model/temporal_builder.py`
 - `backend/app/main.py`
+
+---
+
+### [2026-04-12] Cascade / Windsurf — REC_IMPS.md Features 1–6, 10–13 (all 10 features)
+
+- **Files Modified:**
+  - `backend/app/tracker/reco_consistency_store.py` *(new)*
+  - `backend/app/recommender/fairness_auditor.py` *(new)*
+  - `backend/app/recommender/ranker_explainer.py`
+  - `backend/app/narrator/llm_narrator.py`
+  - `backend/app/main.py`
+
+- **What was done:** Implemented all 10 recommendation engine features from `files/REC_IMPS.md`:
+  - **F1** — LLM narration for reco endpoints via `context_type="recommendation"` in `LLMNarrator.narrate()`; new `RECO_LEARNER/INSTRUCTOR_SYSTEM_PROMPT` + payload builders added to `llm_narrator.py`.
+  - **F2** — Trust score in `RankerExplainer._compute_trust_score()`: fidelity 40% + stability 35% + completeness 25%; stored in `RecommendationExplanation.trust_score`.
+  - **F3** — Alibi `AnchorTabular` anchor rule via `_anchor_rule_with_precision()`; pseudo-classifier wraps ranker at median score; `anchor_precision` field added; falls back to template.
+  - **F4** — Native LightGBM `pred_interact=True` feature interactions in `_feature_interactions(X, shap_dict)`; product-based fallback preserved as `_feature_interactions_product()`.
+  - **F5** — KNN prototype explainer `_prototypes(X, K=3)` using `student_topk.csv` reference pool loaded at startup; Euclidean distance on overlapping feature columns.
+  - **F6/F13** — `RecommendationExplanationStore` (new file, mirrors `consistency_store.py`); wired into `/recommend/student/explain`; drift detection via existing `ExplanationDriftDetector`.
+  - **F10** — `GET /causal/graph` endpoint returns DAG nodes (with ATE, group, is_causal) and edges derived from `CausalAnnotator` domain knowledge.
+  - **F11** — Diversity score on `/recommend/student` response: `n_unique_modules / top_k`; `diversity_warning` string when < 0.5.
+  - **F12** — `FairnessAuditor` (new file); audits mean score deviation (>15%) across protected groups; wired into `/recommend/student` response.
+
+- **Why it was done:** Brings Recommendation Engine to XAI parity with Dropout Risk Engine per `REC_IMPS.md` sprint plan.
+
+- **Dependencies/Impacts:** All new `RecommendationExplanation` fields have defaults (None/0.0/[]); all state attributes guarded with `if state.X is not None`; existing dropout endpoints untouched.
