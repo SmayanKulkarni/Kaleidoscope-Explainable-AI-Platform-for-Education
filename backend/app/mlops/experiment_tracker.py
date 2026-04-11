@@ -24,10 +24,9 @@ import mlflow.pytorch
 import mlflow.sklearn
 import numpy as np
 
-log = logging.getLogger(__name__)
+from backend.app.mlops.mlflow_config import configure_mlflow, TRACKING_URI
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MLRUNS_DIR   = PROJECT_ROOT / "mlruns"
+log = logging.getLogger(__name__)
 
 
 class ExperimentTracker:
@@ -36,9 +35,8 @@ class ExperimentTracker:
         experiment_name: str = "xai-dropout-risk",
         tracking_uri: str | None = None,
     ):
-        self.tracking_uri = tracking_uri or f"sqlite:///{MLRUNS_DIR / 'mlflow.db'}"
-        mlflow.set_tracking_uri(self.tracking_uri)
-        mlflow.set_experiment(experiment_name)
+        self.tracking_uri = tracking_uri or TRACKING_URI
+        configure_mlflow(experiment=experiment_name)
         self.experiment_name = experiment_name
         log.info("ExperimentTracker initialised  experiment=%s  uri=%s",
                  experiment_name, self.tracking_uri)

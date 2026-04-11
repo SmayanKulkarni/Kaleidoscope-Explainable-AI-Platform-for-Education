@@ -34,6 +34,7 @@ jobs:
           RESPONSE=$(curl -sf -X POST \
             "http://${{ secrets.EC2_HOST }}:8000/mlops/retrain?min_events=${MIN_EVENTS}" \
             -H "Content-Type: application/json" \
+            -H "X-MLOPS-Token: ${{ secrets.MLOPS_AUTOMATION_TOKEN }}" \
             --max-time 1800 \
             -w "\nHTTP_STATUS:%{http_code}")
 
@@ -65,6 +66,7 @@ jobs:
           RESPONSE=$(curl -sf -X POST \
             "http://${{ secrets.EC2_HOST }}:8000/mlops/reload" \
             -H "Content-Type: application/json" \
+            -H "X-MLOPS-Token: ${{ secrets.MLOPS_AUTOMATION_TOKEN }}" \
             --max-time 120 \
             -w "\nHTTP_STATUS:%{http_code}")
 

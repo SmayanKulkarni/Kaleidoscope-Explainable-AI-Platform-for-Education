@@ -17,6 +17,7 @@
 - **Phase 4 Implicit Feedback:** COMPLETE — engagement autoencoder, retrain pipeline, hot-reload.
 - **Phase 5 Deployment:** COMPLETE — Docker, PostgreSQL migration, S3, Terraform, GitHub Actions, Alembic, test suite.
 - **Stress Testing:** COMPLETE in `astro` env for `tests/test_stress.py` after event alias compatibility fix (25/25 pass).
+- **MLOps Hardening (Phase 0):** IN PROGRESS — `/mlops/retrain` and `/mlops/reload` now protected by admin JWT or automation token; retrain/reload serialization lock added.
 
 ### Architecture Summary
 - **Models:** GBM (primary), RF (comparison), LSTM (temporal), EngagementAutoencoder (implicit → latent).

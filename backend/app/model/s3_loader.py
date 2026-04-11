@@ -41,6 +41,7 @@ _MODEL_FILES = [
     "training_summary.json",
     "tuning_summary.json",
     "model_version.json",
+    "model_manifest.json",
 ]
 
 # Engagement model directory (entire dir synced)
@@ -165,6 +166,68 @@ def upload_models(models_dir: Path) -> list[str]:
 
     log.info("S3 upload complete  keys=%d", len(uploaded))
     return uploaded
+
+
+def validate_manifest(models_dir: Path) -> dict:
+    """
+    Compare local model_manifest.json against the copy stored on S3.
+
+    Returns
+    -------
+    dict with keys:
+        valid       : bool   — True if local and remote match (or S3 unavailable)
+        local_hash  : str    — feature_schema_hash from local manifest
+        remote_hash : str | None — feature_schema_hash from S3 manifest
+        mismatch    : list[str]  — list of mismatched fields
+        message     : str
+    """
+    import json as _json
+
+    local_path = Path(models_dir) / "model_manifest.json"
+    if not local_path.exists():
+        return {"valid": False, "message": "model_manifest.json not found locally",
+                "local_hash": None, "remote_hash": None, "mismatch": []}
+
+    with open(local_path) as f:
+        local_manifest = _json.load(f)
+
+    if not _BUCKET:
+        return {"valid": True, "message": "S3 not configured — local manifest only",
+                "local_hash": local_manifest.get("feature_schema_hash"),
+                "remote_hash": None, "mismatch": []}
+
+    client = _boto3_client()
+    if client is None:
+        return {"valid": True, "message": "boto3 unavailable — skipping S3 manifest check",
+                "local_hash": local_manifest.get("feature_schema_hash"),
+                "remote_hash": None, "mismatch": []}
+
+    try:
+        import io
+        obj = client.get_object(
+            Bucket=_BUCKET, Key=f"{_PREFIX}model_manifest.json"
+        )
+        remote_manifest = _json.loads(obj["Body"].read())
+    except Exception as e:
+        log.warning("S3 manifest fetch failed: %s", e)
+        return {"valid": True, "message": f"S3 manifest fetch failed: {e}",
+                "local_hash": local_manifest.get("feature_schema_hash"),
+                "remote_hash": None, "mismatch": []}
+
+    check_fields = ["model_version", "feature_schema_hash", "data_fingerprint"]
+    mismatches = [
+        f"{k}: local={local_manifest.get(k)!r} remote={remote_manifest.get(k)!r}"
+        for k in check_fields
+        if local_manifest.get(k) != remote_manifest.get(k)
+    ]
+
+    return {
+        "valid":       len(mismatches) == 0,
+        "local_hash":  local_manifest.get("feature_schema_hash"),
+        "remote_hash": remote_manifest.get("feature_schema_hash"),
+        "mismatch":    mismatches,
+        "message":     "OK" if not mismatches else f"{len(mismatches)} field(s) differ",
+    }
 
 
 def model_version_on_s3() -> Optional[str]:

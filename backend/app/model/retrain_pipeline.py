@@ -27,11 +27,14 @@ RetrainPipeline(event_store, feedback_store, data_dir, models_dir)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import pickle
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -52,15 +55,21 @@ from backend.app.model.implicit_aggregator import (
     ImplicitAggregator,
     LATENT_FEATURE_NAMES,
 )
+from backend.app.mlops.mlflow_config import configure_mlflow
 
 log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Validation gates
 # ──────────────────────────────────────────────────────────────────────────────
-AUC_DROP_TOLERANCE   = 0.02   # allow at most 2% AUC drop vs current production
-BRIER_RISE_TOLERANCE = 0.03   # allow at most 3% Brier rise
-SHAP_FIDELITY_MAX    = 0.05   # SHAP sum error threshold
+AUC_DROP_TOLERANCE     = 0.02    # allow at most 2% AUC drop vs current production
+BRIER_RISE_TOLERANCE   = 0.03    # allow at most 3% Brier rise
+SHAP_FIDELITY_MAX      = 0.05    # SHAP sum error threshold
+MIN_TRAIN_SAMPLES      = 1_000   # minimum rows required to retrain
+MAX_COLD_START_FRAC    = 0.95    # reject if >95% of learners are cold-start
+CLASS_BALANCE_MIN      = 0.05    # minority class must be ≥5% of total
+CLASS_BALANCE_MAX      = 0.95    # majority class must be ≤95% of total
+STRICT_MODE            = os.getenv("RETRAIN_STRICT_MODE", "false").lower() == "true"
 
 
 @dataclass
@@ -214,7 +223,13 @@ class RetrainPipeline:
         )
 
         # ── 7. Validation gates ──
-        rejection = self._validate(gbm_metrics, prev_metrics)
+        cold_frac_pre = (len(signals_dict) - n_with_events) / max(len(signals_dict), 1)
+        rejection = self._validate(
+            gbm_metrics, prev_metrics,
+            X_tr_aug, y_tr,
+            cold_frac_pre,
+            augmented_feature_names,
+        )
         if rejection:
             log.warning("RetrainPipeline REJECTED: %s", rejection)
             return RetrainResult(
@@ -242,9 +257,15 @@ class RetrainPipeline:
             augmented_feature_names,
         )
         self._save_summary(gbm_metrics, rf_metrics, augmented_feature_names, new_version)
+        self._save_manifest(
+            version=new_version,
+            metrics=gbm_metrics,
+            feature_names=augmented_feature_names,
+            train_pkl_path=self._data_dir / "train.pkl",
+        )
 
         elapsed = round(time.time() - t_start, 1)
-        cold_frac = (len(signals_dict) - n_with_events) / max(len(signals_dict), 1)
+        cold_frac = cold_frac_pre
 
         log.info(
             "RetrainPipeline.run COMPLETE  version=%s  features=%d  "
@@ -341,8 +362,7 @@ class RetrainPipeline:
             "random_state":     42,
         }
         log.info("Retraining GBM  features=%d  samples=%d", len(feature_names), len(X_tr))
-        mlflow.set_tracking_uri(str(self._mlruns_dir))
-        mlflow.set_experiment("xai-dropout-risk-retrain")
+        configure_mlflow(experiment="xai-dropout-risk-retrain")
         with mlflow.start_run(run_name="gbm-retrain"):
             base  = GradientBoostingClassifier(**params)
             base.fit(X_tr, y_tr)
@@ -361,8 +381,7 @@ class RetrainPipeline:
             "n_jobs":           -1,
             "random_state":     42,
         }
-        mlflow.set_tracking_uri(str(self._mlruns_dir))
-        mlflow.set_experiment("xai-dropout-risk-retrain")
+        configure_mlflow(experiment="xai-dropout-risk-retrain")
         with mlflow.start_run(run_name="rf-retrain"):
             base  = RandomForestClassifier(**params)
             base.fit(X_tr, y_tr)
@@ -385,31 +404,97 @@ class RetrainPipeline:
             f"{prefix}brier_score":   round(brier_score_loss(y, proba), 4),
         }
 
-    def _validate(self, new_metrics: dict, prev_metrics: dict) -> Optional[str]:
-        """Return rejection reason string or None if metrics pass."""
-        if not prev_metrics:
+    def _validate(
+        self,
+        new_metrics: dict,
+        prev_metrics: dict,
+        X_tr: np.ndarray,
+        y_tr: np.ndarray,
+        cold_start_fraction: float,
+        feature_names: list[str],
+    ) -> Optional[str]:
+        """
+        Return rejection reason string or None if all gates pass.
+
+        Gates (all active in strict mode, only regression gates in normal mode):
+          1. Minimum training data volume
+          2. Class balance
+          3. Cold-start fraction (warn in normal, reject in strict)
+          4. Feature schema consistency
+          5. AUC regression vs current production
+          6. Brier regression vs current production
+        """
+        reasons: list[str] = []
+
+        # ── 1. Data volume ────────────────────────────────────────────────────
+        if len(X_tr) < MIN_TRAIN_SAMPLES:
+            reasons.append(
+                f"Insufficient training data: {len(X_tr)} rows < {MIN_TRAIN_SAMPLES} minimum"
+            )
+
+        # ── 2. Class balance ──────────────────────────────────────────────────
+        if len(y_tr) > 0:
+            pos_frac = float(y_tr.mean())
+            if pos_frac < CLASS_BALANCE_MIN:
+                reasons.append(
+                    f"Class imbalance: positive fraction {pos_frac:.3f} < {CLASS_BALANCE_MIN} "
+                    f"(only {int(y_tr.sum())} dropout samples)"
+                )
+            elif pos_frac > CLASS_BALANCE_MAX:
+                reasons.append(
+                    f"Class imbalance: positive fraction {pos_frac:.3f} > {CLASS_BALANCE_MAX}"
+                )
+
+        # ── 3. Cold-start fraction ────────────────────────────────────────────
+        if cold_start_fraction > MAX_COLD_START_FRAC:
+            msg = (
+                f"Cold-start fraction {cold_start_fraction:.2%} > {MAX_COLD_START_FRAC:.0%} — "
+                f"latent features are effectively zero for most learners"
+            )
+            if STRICT_MODE:
+                reasons.append(msg)
+            else:
+                log.warning("RETRAIN WARN: %s (proceeding in non-strict mode)", msg)
+
+        # ── 4. Feature schema consistency ─────────────────────────────────────
+        expected_schema_path = self._models_dir / "model_manifest.json"
+        if expected_schema_path.exists():
+            with open(expected_schema_path) as f:
+                prev_manifest = json.load(f)
+            prev_hash = prev_manifest.get("feature_schema_hash")
+            curr_hash = _feature_schema_hash(feature_names)
+            if prev_hash and prev_hash != curr_hash:
+                reasons.append(
+                    f"Feature schema changed: prev_hash={prev_hash[:12]}  "
+                    f"curr_hash={curr_hash[:12]}  "
+                    f"(features={feature_names})"
+                )
+
+        # ── 5+6. Metric regression gates ─────────────────────────────────────
+        if prev_metrics:
+            prev_auc   = prev_metrics.get("test_auc_roc")
+            prev_brier = prev_metrics.get("test_brier_score")
+            new_auc    = new_metrics.get("test_auc_roc")
+            new_brier  = new_metrics.get("test_brier_score")
+
+            if prev_auc is not None and new_auc is not None:
+                if new_auc < prev_auc - AUC_DROP_TOLERANCE:
+                    reasons.append(
+                        f"AUC regression: {new_auc:.4f} < {prev_auc:.4f} - {AUC_DROP_TOLERANCE} "
+                        f"(drop={prev_auc - new_auc:.4f})"
+                    )
+
+            if prev_brier is not None and new_brier is not None:
+                if new_brier > prev_brier + BRIER_RISE_TOLERANCE:
+                    reasons.append(
+                        f"Brier regression: {new_brier:.4f} > {prev_brier:.4f} + {BRIER_RISE_TOLERANCE} "
+                        f"(rise={new_brier - prev_brier:.4f})"
+                    )
+        else:
             log.info("No previous metrics found — skipping regression gate (first retrain)")
-            return None
 
-        prev_auc   = prev_metrics.get("test_auc_roc")
-        prev_brier = prev_metrics.get("test_brier_score")
-        new_auc    = new_metrics.get("test_auc_roc")
-        new_brier  = new_metrics.get("test_brier_score")
-
-        if prev_auc is not None and new_auc is not None:
-            if new_auc < prev_auc - AUC_DROP_TOLERANCE:
-                return (
-                    f"AUC regression: {new_auc:.4f} < {prev_auc:.4f} - {AUC_DROP_TOLERANCE} "
-                    f"(drop={prev_auc - new_auc:.4f})"
-                )
-
-        if prev_brier is not None and new_brier is not None:
-            if new_brier > prev_brier + BRIER_RISE_TOLERANCE:
-                return (
-                    f"Brier regression: {new_brier:.4f} > {prev_brier:.4f} + {BRIER_RISE_TOLERANCE} "
-                    f"(rise={new_brier - prev_brier:.4f})"
-                )
-
+        if reasons:
+            return "; ".join(reasons)
         return None
 
     def _save_models(self, gbm_model, rf_model, feature_names: list[str]) -> None:
@@ -447,3 +532,63 @@ class RetrainPipeline:
         }
         with open(self._models_dir / "training_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
+
+    def _save_manifest(
+        self,
+        version: str,
+        metrics: dict,
+        feature_names: list[str],
+        train_pkl_path: Path,
+    ) -> None:
+        """
+        Write model_manifest.json — tamper-evident record for artifact governance.
+
+        Fields
+        ------
+        model_version        : e.g. "gbm-v3"
+        training_timestamp   : ISO-8601 UTC
+        metrics_snapshot     : dict of GBM test metrics at promotion time
+        feature_schema_hash  : SHA-256 of sorted JSON feature list
+        data_fingerprint     : SHA-256 of the raw train.pkl bytes
+        n_features           : int
+        strict_mode          : bool — whether RETRAIN_STRICT_MODE was active
+        """
+        schema_hash = _feature_schema_hash(feature_names)
+        data_fp = _file_sha256(train_pkl_path) if train_pkl_path.exists() else "unavailable"
+
+        manifest = {
+            "model_version":       version,
+            "training_timestamp":  datetime.now(timezone.utc).isoformat(),
+            "metrics_snapshot":    metrics,
+            "feature_schema_hash": schema_hash,
+            "data_fingerprint":    data_fp,
+            "n_features":          len(feature_names),
+            "feature_names":       feature_names,
+            "strict_mode":         STRICT_MODE,
+        }
+        manifest_path = self._models_dir / "model_manifest.json"
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        log.info(
+            "Manifest saved  version=%s  schema_hash=%s  data_fp=%s",
+            version, schema_hash[:16], data_fp[:16],
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Module-level helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _feature_schema_hash(feature_names: list[str]) -> str:
+    """SHA-256 of the JSON-encoded sorted feature name list."""
+    canonical = json.dumps(sorted(feature_names), separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    """SHA-256 of a file's raw bytes (streaming, 64KB chunks)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
