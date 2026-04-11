@@ -531,6 +531,104 @@ def whatif(req: WhatIfRequest):
     }
 
 
+class CompareRequest(BaseModel):
+    features:   LearnerFeatures
+    history:    list[LearnerFeatures] = []   # past weekly snapshots, oldest-first
+    learner_id: str = "anonymous"
+
+
+@app.post("/compare")
+def compare_models(req: CompareRequest):
+    """
+    Side-by-side GBM vs LSTM comparison with cross-model disagreement analysis.
+
+    Always returns GBM results. LSTM sections are omitted gracefully if the
+    LSTM or DeepSHAP explainer is not loaded.
+    """
+    _require_model()
+    fd = req.features.model_dump()
+    X  = _features_to_array(req.features)
+
+    # ── GBM ──────────────────────────────────────────────────────────────────
+    gbm_score  = round(float(state.gbm_model.predict_proba(X)[0][1]), 4)
+    shap_result = state.shap_explainer.explain(fd)
+    gbm_top3   = list(shap_result.top_features[:3])
+
+    # ── LSTM ─────────────────────────────────────────────────────────────────
+    lstm_score:              Optional[float] = None
+    lstm_risk_label:         Optional[str]   = None
+    lstm_temporal_dict:      Optional[dict]  = None
+    lstm_top3_temporal:      list[str]       = []
+
+    if state.lstm_model is not None:
+        seq        = _build_lstm_sequence(req.history, req.features, state.feature_names)
+        lstm_score = round(float(state.lstm_model.predict_proba(seq)[0][1]), 4)
+        lstm_risk_label = _risk_label(lstm_score)
+
+        if state.shap_explainer.deep_explainer is not None:
+            temporal_result  = state.shap_explainer.explain_temporal(seq)
+            lstm_temporal_dict = temporal_result.to_dict()
+
+            # Find highest-magnitude week → extract its top-3 features
+            try:
+                attr_array = np.array(temporal_result.temporal_attributions)  # (T, F)
+                week_magnitudes = np.abs(attr_array).sum(axis=1)      # (T,)
+                best_week_idx   = int(np.argmax(week_magnitudes))
+                top_indices     = np.argsort(np.abs(attr_array[best_week_idx]))[::-1][:3]
+                lstm_top3_temporal = [
+                    state.feature_names[i]
+                    for i in top_indices
+                    if i < len(state.feature_names)
+                ]
+            except Exception:
+                lstm_top3_temporal = []
+
+    # ── Disagreement analysis ─────────────────────────────────────────────────
+    score_delta       = round(abs(gbm_score - (lstm_score or gbm_score)), 4)
+    disagreement_flag = score_delta > 0.15
+    feature_disagreement = (
+        [f for f in gbm_top3 if f not in lstm_top3_temporal]
+        if lstm_top3_temporal else []
+    )
+
+    # ── Interpretation ────────────────────────────────────────────────────────
+    if lstm_score is None:
+        interpretation = "LSTM not loaded — GBM aggregate risk only."
+    elif disagreement_flag and lstm_score > gbm_score:
+        interpretation = (
+            "GBM sees moderate aggregate risk; LSTM detected a recent decline pattern "
+            "that elevates the temporal risk estimate."
+        )
+    elif disagreement_flag and gbm_score > lstm_score:
+        interpretation = (
+            "GBM captures higher aggregate risk; LSTM suggests recent behaviour is improving, "
+            "reducing the temporal risk estimate."
+        )
+    elif feature_disagreement:
+        interpretation = (
+            f"Models agree on overall risk but diverge on drivers: "
+            f"{feature_disagreement} are salient for GBM but not the most active recent week."
+        )
+    else:
+        interpretation = (
+            "GBM and LSTM agree on both risk level and key drivers — high model consistency."
+        )
+
+    return {
+        "learner_id":               req.learner_id,
+        "gbm_score":                gbm_score,
+        "gbm_risk_label":           _risk_label(gbm_score),
+        "gbm_top3":                 gbm_top3,
+        "lstm_score":               lstm_score,
+        "lstm_risk_label":          lstm_risk_label,
+        "lstm_temporal_attributions": lstm_temporal_dict,
+        "score_delta":              score_delta,
+        "disagreement_flag":        disagreement_flag,
+        "feature_disagreement":     feature_disagreement,
+        "interpretation":           interpretation,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Endpoints — Phase 2: Full XAI Engine
 # ──────────────────────────────────────────────────────────────────────────────
