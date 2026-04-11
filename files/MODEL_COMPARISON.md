@@ -86,6 +86,53 @@ weighted avg       0.88      0.87      0.87      6519
 
 ---
 
+## Post-Tuning Results (Optuna TPE, 20 trials each)
+
+### Tuned vs Baseline — AUC-ROC
+
+| Model | Baseline AUC | Tuned AUC | Δ | Model Updated? |
+|---|:---:|:---:|:---:|:---:|
+| **GBM** | 0.9427 | **0.9431** | +0.0004 | ✅ Yes |
+| **RF** | 0.9425 | 0.9422 | −0.0003 | ❌ No (baseline kept) |
+| **LSTM** | 0.8771 | **0.8780** | +0.0009 | ✅ Yes |
+
+> RF tuned AUC did not beat baseline — original `rf.pkl` retained.
+
+### Best Hyperparameters Found
+
+#### GBM (Tuned)
+| Param | Baseline | Tuned |
+|---|---|---|
+| `n_estimators` | 200 | **300** |
+| `learning_rate` | 0.05 | **0.0349** |
+| `max_depth` | 4 | 4 |
+| `subsample` | 0.8 | **0.774** |
+| `min_samples_leaf` | 20 | **29** |
+| `max_features` | — | **sqrt** |
+
+#### RF (Best found, not saved)
+| Param | Baseline | Best Trial |
+|---|---|---|
+| `n_estimators` | 200 | 500 |
+| `max_depth` | None | 13 |
+| `min_samples_leaf` | 10 | 19 |
+| `max_features` | — | log2 |
+| `min_samples_split` | — | 15 |
+
+#### LSTM (Tuned)
+| Param | Baseline | Tuned |
+|---|---|---|
+| `hidden_dim` | 64 | **32** |
+| `n_layers` | 2 | **1** |
+| `dropout` | 0.30 | **0.293** |
+| `lr` | 1e-3 | **3.54e-3** |
+| `weight_decay` | 1e-4 | **2.61e-5** |
+| `batch_size` | 512 | **1024** |
+
+> LSTM converged to a simpler architecture (1-layer, hidden=32) — suggests the temporal patterns in OULAD data are relatively shallow.
+
+---
+
 ## Analysis
 
 ### GBM vs RF

@@ -78,8 +78,15 @@ class SHAPExplainer:
         self.feature_names = feature_names
         self.gbm_model     = gbm_model
 
-        log.info("Initialising TreeExplainer …")
-        self.tree_explainer = shap.TreeExplainer(gbm_model)
+        # TreeSHAP needs the raw tree model, not CalibratedClassifierCV
+        from sklearn.calibration import CalibratedClassifierCV
+        base_model = gbm_model
+        if isinstance(gbm_model, CalibratedClassifierCV):
+            base_model = gbm_model.estimator
+            if base_model is None:
+                base_model = gbm_model.calibrated_classifiers_[0].estimator
+        log.info("Initialising TreeExplainer (base=%s) …", type(base_model).__name__)
+        self.tree_explainer = shap.TreeExplainer(base_model)
 
         self.deep_explainer = None
         self.lstm_model     = lstm_model
