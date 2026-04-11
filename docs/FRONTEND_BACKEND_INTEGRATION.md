@@ -47,12 +47,13 @@ Base URL: `VITE_API_URL` (default `http://localhost:8000`)
 | Method | Path | Auth | Body | Response |
 |--------|------|------|------|----------|
 | GET | `/recommend/health` | None | — | `{student_ranker: {loaded, n_features, …}, instructor_ranker: {…}}` |
-| POST | `/recommend/student` | None | `{learner_id, items: [{item_id, features}], top_k, include_shap}` | `{learner_id, top_k, recommendations: [{item_id, score, rank, top_features, shap_values}]}` |
-| POST | `/recommend/student/explain` | None | `{learner_id, features, item_id}` | `{learner_id, item_id, score, shap_values, top_features, anchor_rule, feature_interactions, causal_annotations, shap_stability, plain_language}` |
+| POST | `/recommend/student` | None | `{learner_id, items: [{item_id, features}], top_k, include_shap}` | `{learner_id, top_k, recommendations, diversity_score, diversity_warning, fairness_audit?}` |
+| POST | `/recommend/student/explain` | None | `{learner_id, features, item_id, audience?}` | `{learner_id, item_id, score, shap_values, top_features, anchor_rule, anchor_precision, feature_interactions, causal_annotations, shap_stability, plain_language, trust_score, prototypes, narratives, explanation_drift}` |
+| GET | `/causal/graph` | None | — | `{nodes: [{id, label, group, is_causal, ate, effect_direction}], edges: [{from, to}]}` |
 | POST | `/recommend/student/whatif` | None | `{learner_id, features, overrides}` | `{learner_id, original_score, modified_score, score_delta, direction, changed_features, shap_delta}` |
-| POST | `/recommend/instructor` | None | `{instructor_id, items, top_k, include_shap}` | Same shape as student |
-| POST | `/recommend/instructor/explain` | None | `{instructor_id, features, item_id}` | Same shape as student explain |
-| POST | `/recommend/instructor/whatif` | None | `{instructor_id, features, overrides}` | Same shape as student whatif |
+| POST | `/recommend/instructor` | None | `{instructor_id, items: [{item_id, features}], top_k, include_shap}` | `{instructor_id, top_k, recommendations, diversity_score, diversity_warning, fairness_audit?}` |
+| POST | `/recommend/instructor/explain` | None | `{instructor_id, features, item_id, audience?}` | See instructor explain schema below |
+| POST | `/recommend/instructor/whatif` | None | `{instructor_id, features, overrides}` | `{instructor_id, original_score, modified_score, score_delta, direction, changed_features, shap_delta}` |
 
 ### Feedback + Events
 
@@ -75,6 +76,90 @@ Base URL: `VITE_API_URL` (default `http://localhost:8000`)
 | GET | `/mlops/metrics` | None | `{training: {auc, f1, brier, …}, model_version}` |
 | POST | `/mlops/retrain` | Admin/Token | `{queued, reason?, success?, …}` |
 | POST | `/mlops/reload` | Admin/Token | `{success, model_version, …}` |
+
+---
+
+## 1b. Instructor Recommendation — Updated Feature Schema (34 features)
+
+The instructor ranker was re-trained on a richer 34-feature dataset. Items submitted to `/recommend/instructor` now accept:
+
+```typescript
+interface InstructorRecoItem {
+  item_id: string;
+  features: {
+    // Instructor attributes
+    instructor_archetype:           string;  // "Socratic Guide" | "Tutor" | ...
+    instructor_department:          string;  // e.g. "Humanities"
+    instructor_teaching_style:      string;  // "socratic" | "lecture" | ...
+    instructor_experience_years:    number;
+    instructor_avg_cohort_size:     number;
+    instructor_intervention_intensity: number;  // 0.0–1.0
+    instructor_past_success_rate:   number;  // 0.0–1.0
+    instructor_confidence_score:    number;  // 0.0–1.0
+    // Student attributes
+    learner_id:                     string;
+    student_current_module:         string;
+    student_current_presentation:   string;
+    student_dropout_risk_score:     number;  // 0.0–1.0
+    student_risk_trajectory:        string;  // "improving" | "at_risk_stable" | "declining" | ...
+    student_learning_momentum:      number;
+    student_quiz_avg_score:         number;  // 0.0–100.0
+    student_assignment_submission_rate: number;
+    student_missed_deadlines:       number;
+    student_days_inactive:          number;
+    student_week_in_course:         number;
+    student_vs_cohort_quiz_delta:   number;  // student quiz score minus cohort avg
+    student_peer_collab_readiness:  number;  // 0.0–1.0
+    // Recommendation target
+    recommended_module:             string;
+    recommended_presentation:       string;
+    student_affinity_score:         number;
+    // Cohort context
+    cohort_signal_score:            number;
+    cohort_avg_quiz_score:          number;
+    cohort_avg_dropout_rate:        number;  // 0.0–1.0
+    cohort_size:                    number;
+    cohort_engagement_percentile:   number;  // 0.0–1.0
+    // Intervention type
+    intervention_type:              string;  // "remediation" | "enrichment" | "peer_support" | ...
+    intervention_urgency:           string;  // "high" | "medium" | "low"
+    recommended_content_type:       string;  // "video" | "quiz" | "reflection_questions" | ...
+    estimated_effort_hours:         number;
+  };
+}
+```
+
+### `/recommend/instructor/explain` Response (new fields returned directly)
+
+```typescript
+interface InstructorExplainResponse {
+  instructor_id:             string;
+  item_id:                   string;
+  score:                     number;
+  shap_values:               Record<string, number>;
+  top_features:              string[];
+  anchor_rule:               string;
+  anchor_precision:          number;
+  feature_interactions:      Array<{features: string[], strength: number, direction: string}>;
+  causal_annotations:        Record<string, {type: string, ate: number}>;
+  shap_stability:            number;
+  plain_language:            string;
+  trust_score:               {trust_score: number, fidelity: number, stability: number, completeness: number} | null;
+  prototypes:                Array<{item_id: string, score: number, similarity: number}> | null;
+  narratives:                {learner_text: string|null, instructor_text: string|null} | null;
+  explanation_drift:         object | null;
+  // Intervention metadata passthrough (extracted from request features)
+  intervention_type?:        string;
+  intervention_urgency?:     string;
+  recommended_content_type?: string;
+  estimated_effort_hours?:   number;
+  student_dropout_risk_score?: number;
+  student_risk_trajectory?:  string;
+  instructor_archetype?:     string;
+  instructor_teaching_style?: string;
+  cohort_avg_dropout_rate?:  number;
+}
+```
 
 ---
 

@@ -113,22 +113,33 @@ Constraints:
 
 def _build_instructor_archetypes(cfg: GroqConfig, count: int) -> List[Dict[str, Any]]:
     system = (
-        "You create realistic synthetic instructor intervention styles for recommendation systems. "
+        "You create realistic synthetic instructor profiles and intervention styles for educational recommendation systems. "
         "Output valid JSON only, no markdown."
     )
     user = f"""
 Generate {count} instructor archetypes for course assignment recommendation.
 
 Return JSON object with key "instructor_archetypes".
-Each archetype includes:
-- archetype_name (string)
-- intervention_intensity (float 0-1)
-- remediation_bias (float 0-1)
-- challenge_bias (float 0-1)
+Each archetype must include ALL of these fields:
+- archetype_name (string, e.g. "Structured Mentor", "Challenge-Driven Coach")
+- teaching_style (one of: "scaffolded", "socratic", "direct_instruction", "project_based", "flipped")
+- department (one of: "STEM", "Humanities", "Business", "Health", "Computing", "Social_Sciences")
+- experience_years_min (int 1-30)
+- experience_years_max (int, must be >= experience_years_min, max 35)
+- intervention_intensity (float 0-1, how proactively this instructor intervenes)
+- remediation_bias (float 0-1, preference for remedial assignments over challenge)
+- challenge_bias (float 0-1, preference for stretch assignments)
+- enrichment_bias (float 0-1, preference for optional enrichment content)
+- peer_review_bias (float 0-1, preference for peer-review tasks)
 - cohort_signal_weight (float 0-1)
 - student_affinity_weight (float 0-1)
+- success_rate_mean (float 0.4-0.95, typical past intervention success rate)
+- success_rate_std (float 0.02-0.12)
+- avg_cohort_size_mean (int 15-120)
+- confidence_baseline (float 0.5-0.95, how confident instructor is in recommendations)
 
-The two weight fields should usually sum close to 1.
+Note: remediation_bias + challenge_bias + enrichment_bias + peer_review_bias should sum close to 1.
+cohort_signal_weight + student_affinity_weight should sum close to 1.
 """
     parsed = _call_groq_json(cfg, system, user)
     archetypes = parsed.get("instructor_archetypes", []) if isinstance(parsed, dict) else []
@@ -419,6 +430,79 @@ def _build_student_dataset(
     return student_df
 
 
+def _intervention_type(arche: Dict[str, Any], dropout_risk: float, learning_momentum: float) -> str:
+    """Pick intervention type based on archetype biases and student state."""
+    rem  = _to_float(arche.get("remediation_bias"),  0.25)
+    chal = _to_float(arche.get("challenge_bias"),    0.25)
+    enr  = _to_float(arche.get("enrichment_bias"),   0.25)
+    peer = _to_float(arche.get("peer_review_bias"),  0.25)
+
+    # At-risk students weight toward remediation; high-momentum toward challenge/enrichment
+    rem  += 0.25 * dropout_risk
+    chal += 0.15 * learning_momentum
+    enr  += 0.10 * learning_momentum
+    peer += 0.05
+
+    weights = {"remediation": rem, "challenge": chal, "enrichment": enr, "peer_review": peer}
+    return max(weights, key=lambda k: weights[k])
+
+
+def _intervention_urgency(dropout_risk: float, days_inactive: float, missed_deadlines: float) -> str:
+    score = 0.5 * dropout_risk + 0.3 * min(days_inactive / 30.0, 1.0) + 0.2 * min(missed_deadlines / 5.0, 1.0)
+    if score > 0.65:
+        return "high"
+    if score > 0.35:
+        return "medium"
+    return "low"
+
+
+def _content_type(intervention: str, teaching_style: str) -> str:
+    mapping = {
+        ("remediation", "scaffolded"):        "guided_worksheet",
+        ("remediation", "direct_instruction"): "video_lecture_recap",
+        ("remediation", "socratic"):           "reflection_questions",
+        ("challenge", "project_based"):        "mini_project",
+        ("challenge", "flipped"):              "advanced_case_study",
+        ("challenge", "socratic"):             "debate_prompt",
+        ("enrichment", "project_based"):       "optional_extension_task",
+        ("enrichment", "flipped"):             "curated_reading_list",
+        ("peer_review", "socratic"):           "structured_peer_critique",
+        ("peer_review", "scaffolded"):         "rubric_guided_peer_review",
+    }
+    key = (intervention, teaching_style)
+    if key in mapping:
+        return mapping[key]
+    defaults = {
+        "remediation": "practice_exercises",
+        "challenge":   "challenge_problem_set",
+        "enrichment":  "supplementary_materials",
+        "peer_review": "peer_feedback_exchange",
+    }
+    return defaults.get(intervention, "mixed_content")
+
+
+def _priority_reason_tag(
+    dropout_risk: float,
+    learning_momentum: float,
+    days_inactive: float,
+    quiz_avg_score: float,
+    missed_deadlines: float,
+) -> str:
+    if dropout_risk > 0.65:
+        return "high_dropout_risk"
+    if missed_deadlines >= 3 and days_inactive > 10:
+        return "disengagement_pattern"
+    if quiz_avg_score < 40.0:
+        return "low_assessment_performance"
+    if learning_momentum > 0.7 and dropout_risk < 0.3:
+        return "high_achiever_stretch"
+    if days_inactive > 14:
+        return "prolonged_inactivity"
+    if learning_momentum < 0.35:
+        return "low_engagement_momentum"
+    return "routine_progression"
+
+
 def _build_instructor_dataset(
     student_df: pd.DataFrame,
     instructor_archetypes: List[Dict[str, Any]],
@@ -427,6 +511,7 @@ def _build_instructor_dataset(
     seed: int,
 ) -> pd.DataFrame:
     rng = random.Random(seed + 101)
+    np_rng = np.random.default_rng(seed + 101)
 
     unique_students = (
         student_df[["student_id", "learner_id", "current_module", "current_presentation"]]
@@ -438,15 +523,26 @@ def _build_instructor_dataset(
     rng.shuffle(assigned_instructors)
     unique_students["instructor_id"] = assigned_instructors
 
+    # ── Cohort analytics (per recommended_module × presentation) ──
     cohort = student_df.groupby(["recommended_module", "recommended_presentation"], as_index=False).agg(
-        cohort_investment_score=("implicit_clicks_14d", "mean"),
+        cohort_avg_clicks=("implicit_clicks_14d", "mean"),
         cohort_watch_ratio=("implicit_video_watch_ratio_14d", "mean"),
-        cohort_forum_events=("implicit_forum_events_14d", "mean"),
+        cohort_avg_forum_events=("implicit_forum_events_14d", "mean"),
+        cohort_avg_quiz_score=("base_quiz_avg_score", "mean"),
+        cohort_avg_dropout_rate=("dropout_risk", "mean"),
+        cohort_size=("student_id", "nunique"),
     )
+    max_clicks = max(1.0, cohort["cohort_avg_clicks"].max())
+    max_forum   = max(1.0, cohort["cohort_avg_forum_events"].max())
     cohort["cohort_signal"] = (
-        0.55 * (cohort["cohort_investment_score"] / max(1.0, cohort["cohort_investment_score"].max()))
-        + 0.35 * cohort["cohort_watch_ratio"]
-        + 0.10 * (cohort["cohort_forum_events"] / max(1.0, cohort["cohort_forum_events"].max()))
+        0.45 * (cohort["cohort_avg_clicks"] / max_clicks)
+        + 0.30 * cohort["cohort_watch_ratio"]
+        + 0.15 * (cohort["cohort_avg_forum_events"] / max_forum)
+        + 0.10 * (cohort["cohort_avg_quiz_score"] / 100.0)
+    )
+    # Cohort engagement percentile
+    cohort["cohort_engagement_percentile"] = (
+        cohort["cohort_signal"].rank(pct=True).round(4)
     )
 
     merged = student_df.merge(
@@ -454,14 +550,49 @@ def _build_instructor_dataset(
         on="student_id",
         how="left",
     ).merge(
-        cohort[["recommended_module", "recommended_presentation", "cohort_signal"]],
+        cohort[[
+            "recommended_module", "recommended_presentation",
+            "cohort_signal", "cohort_avg_quiz_score", "cohort_avg_dropout_rate",
+            "cohort_size", "cohort_engagement_percentile",
+        ]],
         on=["recommended_module", "recommended_presentation"],
         how="left",
     )
 
+    # ── Per-instructor stable profile fields (sampled once per instructor) ──
+    instructor_profiles: Dict[str, Dict[str, Any]] = {}
+    for iid in instructor_ids:
+        arche = instructor_archetypes[hash(iid) % len(instructor_archetypes)]
+        exp_min = _to_int(arche.get("experience_years_min"), 2)
+        exp_max = _to_int(arche.get("experience_years_max"), max(exp_min + 1, 10))
+        exp_years = int(np_rng.integers(exp_min, exp_max + 1))
+        cohort_size = max(10, int(np_rng.normal(
+            _to_float(arche.get("avg_cohort_size_mean"), 40), 10
+        )))
+        instructor_profiles[iid] = {
+            "department":              arche.get("department", "Computing"),
+            "teaching_style":          arche.get("teaching_style", "direct_instruction"),
+            "experience_years":        exp_years,
+            "instructor_avg_cohort_size": cohort_size,
+            "instructor_intervention_intensity": round(
+                float(np.clip(_to_float(arche.get("intervention_intensity"), 0.5), 0, 1)), 4
+            ),
+            "instructor_past_success_rate": round(float(np.clip(
+                np_rng.normal(
+                    _to_float(arche.get("success_rate_mean"), 0.7),
+                    _to_float(arche.get("success_rate_std"), 0.06),
+                ), 0.35, 0.97
+            )), 4),
+            "instructor_confidence_baseline": round(
+                float(np.clip(_to_float(arche.get("confidence_baseline"), 0.75), 0.5, 0.98)), 4
+            ),
+        }
+
     rows: List[Dict[str, Any]] = []
     for instructor_id, g in merged.groupby("instructor_id"):
         arche = instructor_archetypes[hash(instructor_id) % len(instructor_archetypes)]
+        profile = instructor_profiles.get(instructor_id, {})
+
         cohort_w = float(np.clip(_to_float(arche.get("cohort_signal_weight"), 0.5), 0, 1))
         student_w = float(np.clip(_to_float(arche.get("student_affinity_weight"), 0.5), 0, 1))
         if cohort_w + student_w == 0:
@@ -475,28 +606,125 @@ def _build_instructor_dataset(
             cohort_w * g["cohort_signal"].fillna(0.0)
             + student_w * g["recommendation_score"].fillna(0.0)
             + 0.08 * (1.0 - g["dropout_risk"].fillna(0.0))
+            + 0.05 * profile.get("instructor_intervention_intensity", 0.5) * g["dropout_risk"].fillna(0.0)
         )
+
+        teaching_style = profile.get("teaching_style", "direct_instruction")
 
         for student_id, sg in g.groupby("student_id"):
             sg = sg.sort_values("assignment_priority", ascending=False).head(top_k)
             for rank, (_, rec) in enumerate(sg.iterrows(), start=1):
-                rows.append(
-                    {
-                        "instructor_id": instructor_id,
-                        "instructor_archetype": arche.get("archetype_name", "balanced_mentor"),
-                        "student_id": int(student_id),
-                        "learner_id": rec.get("learner_id"),
-                        "student_current_module": rec.get("current_module"),
-                        "student_current_presentation": rec.get("current_presentation"),
-                        "recommended_module": rec.get("recommended_module"),
-                        "recommended_presentation": rec.get("recommended_presentation"),
-                        "student_affinity_score": round(float(rec.get("recommendation_score", 0.0)), 4),
-                        "cohort_signal_score": round(float(rec.get("cohort_signal", 0.0)), 4),
-                        "assignment_priority": round(float(rec.get("assignment_priority", 0.0)), 4),
-                        "rank": rank,
-                        "recommendation_reason": "cohort_investment_plus_student_affinity",
-                    }
+                dropout_risk      = float(rec.get("dropout_risk", 0))
+                learning_momentum = float(rec.get("learning_momentum", 0.5))
+                days_inactive     = float(rec.get("base_days_since_last_activity", 0))
+                quiz_avg_score    = float(rec.get("base_quiz_avg_score", 50))
+                missed_deadlines  = float(rec.get("base_missed_deadlines_count", 0))
+                week_in_course    = float(rec.get("base_current_week_in_course", 1))
+                assignment_sub    = float(rec.get("base_assignment_submission_rate", 0.5))
+                cohort_size_val   = int(rec.get("cohort_size", 30))
+
+                ivtype    = _intervention_type(arche, dropout_risk, learning_momentum)
+                urgency   = _intervention_urgency(dropout_risk, days_inactive, missed_deadlines)
+                ctype     = _content_type(ivtype, teaching_style)
+                reason    = _priority_reason_tag(
+                    dropout_risk, learning_momentum, days_inactive, quiz_avg_score, missed_deadlines
                 )
+
+                # Effort hours: remediation/challenge = more effort; enrichment/peer = moderate
+                effort_base = {"remediation": 2.5, "challenge": 3.5, "enrichment": 1.5, "peer_review": 2.0}
+                effort_hrs = round(float(np.clip(
+                    np_rng.normal(effort_base.get(ivtype, 2.0), 0.5), 0.5, 6.0
+                )), 2)
+
+                # Predicted improvement: high success rate + high urgency + low momentum → bigger jump
+                predicted_improvement = round(float(np.clip(
+                    profile.get("instructor_past_success_rate", 0.7)
+                    * (0.5 + 0.3 * dropout_risk + 0.2 * (1.0 - learning_momentum))
+                    + np_rng.normal(0, 0.04),
+                    0.1, 0.95
+                )), 4)
+
+                # Instructor confidence adjusts based on how well student profile matches intervention
+                conf_adjust = (
+                    -0.08 * dropout_risk
+                    + 0.06 * assignment_sub
+                    + 0.04 * (week_in_course / 12.0)
+                    + np_rng.normal(0, 0.03)
+                )
+                instructor_confidence = round(float(np.clip(
+                    profile.get("instructor_confidence_baseline", 0.75) + conf_adjust, 0.3, 0.99
+                )), 4)
+
+                # Student percentile within instructor's current cohort
+                cohort_quiz_mean = float(rec.get("cohort_avg_quiz_score", 55.0))
+                student_vs_cohort_quiz_delta = round(quiz_avg_score - cohort_quiz_mean, 3)
+
+                # Peer interaction potential: forum posts + watch ratio → proxy for peer collab readiness
+                peer_collab_readiness = round(float(np.clip(
+                    0.5 * min(float(rec.get("implicit_forum_events_14d", 0)) / 15.0, 1.0)
+                    + 0.3 * float(rec.get("implicit_video_watch_ratio_14d", 0.4))
+                    + 0.2 * (1.0 - min(days_inactive / 21.0, 1.0)),
+                    0.0, 1.0
+                )), 4)
+
+                # Risk trajectory label: is student getting worse (risk > 0.6 + low momentum)?
+                if dropout_risk > 0.6 and learning_momentum < 0.4:
+                    risk_trajectory = "deteriorating"
+                elif dropout_risk < 0.3 and learning_momentum > 0.6:
+                    risk_trajectory = "improving"
+                elif dropout_risk > 0.4:
+                    risk_trajectory = "at_risk_stable"
+                else:
+                    risk_trajectory = "stable"
+
+                rows.append({
+                    # ── IDs ──
+                    "instructor_id":                   instructor_id,
+                    "instructor_archetype":            arche.get("archetype_name", "balanced_mentor"),
+                    "student_id":                      int(student_id),
+                    "learner_id":                      rec.get("learner_id"),
+                    # ── Instructor profile ──
+                    "instructor_department":           profile.get("department", "Computing"),
+                    "instructor_teaching_style":       teaching_style,
+                    "instructor_experience_years":     profile.get("experience_years", 5),
+                    "instructor_avg_cohort_size":      profile.get("instructor_avg_cohort_size", 40),
+                    "instructor_intervention_intensity": profile.get("instructor_intervention_intensity", 0.5),
+                    "instructor_past_success_rate":    profile.get("instructor_past_success_rate", 0.7),
+                    "instructor_confidence_score":     instructor_confidence,
+                    # ── Student context ──
+                    "student_current_module":          rec.get("current_module"),
+                    "student_current_presentation":    rec.get("current_presentation"),
+                    "student_dropout_risk_score":      round(dropout_risk, 4),
+                    "student_risk_trajectory":         risk_trajectory,
+                    "student_learning_momentum":       round(learning_momentum, 4),
+                    "student_quiz_avg_score":          round(quiz_avg_score, 3),
+                    "student_assignment_submission_rate": round(assignment_sub, 4),
+                    "student_missed_deadlines":        int(missed_deadlines),
+                    "student_days_inactive":           int(days_inactive),
+                    "student_week_in_course":          int(week_in_course),
+                    "student_vs_cohort_quiz_delta":    student_vs_cohort_quiz_delta,
+                    "student_peer_collab_readiness":   peer_collab_readiness,
+                    # ── Cohort analytics ──
+                    "recommended_module":              rec.get("recommended_module"),
+                    "recommended_presentation":        rec.get("recommended_presentation"),
+                    "cohort_signal_score":             round(float(rec.get("cohort_signal", 0.0)), 4),
+                    "cohort_avg_quiz_score":           round(float(rec.get("cohort_avg_quiz_score", 0.0)), 3),
+                    "cohort_avg_dropout_rate":         round(float(rec.get("cohort_avg_dropout_rate", 0.0)), 4),
+                    "cohort_size":                     cohort_size_val,
+                    "cohort_engagement_percentile":    round(float(rec.get("cohort_engagement_percentile", 0.5)), 4),
+                    # ── Intervention ──
+                    "student_affinity_score":          round(float(rec.get("recommendation_score", 0.0)), 4),
+                    "assignment_priority":             round(float(rec.get("assignment_priority", 0.0)), 4),
+                    "rank":                            rank,
+                    "intervention_type":               ivtype,
+                    "intervention_urgency":            urgency,
+                    "recommended_content_type":        ctype,
+                    "estimated_effort_hours":          effort_hrs,
+                    # ── Outcome predictions ──
+                    "predicted_improvement_score":     predicted_improvement,
+                    "priority_reason_tag":             reason,
+                    "recommendation_reason":           "cohort_plus_student_affinity_plus_instructor_style",
+                })
 
     return pd.DataFrame(rows)
 

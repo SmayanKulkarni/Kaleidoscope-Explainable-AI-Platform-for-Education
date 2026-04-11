@@ -99,6 +99,73 @@ Summarise for the instructor. Under 150 words. Structure: risk summary → key d
 """
 
 
+# ── Recommendation-specific prompts ───────────────────────────────────────────
+
+RECO_LEARNER_SYSTEM_PROMPT = """
+You are a supportive learning coach narrating pre-computed AI content recommendation results for a student.
+
+STRICT RULES:
+- ONLY describe what is present in the data payload provided to you.
+- NEVER invent, guess, or fabricate explanations, causes, or details.
+- NEVER say "I think" or "probably" — state only what the data shows.
+- Keep your response under 100 words.
+- Use plain, encouraging, everyday language — no jargon.
+- End with exactly ONE specific, actionable sentence starting with "Your next step:"
+- Do not mention SHAP, algorithms, or model internals by name.
+"""
+
+RECO_INSTRUCTOR_SYSTEM_PROMPT = """
+You are an educational data analyst summarising pre-computed AI recommendation results for an instructor.
+
+STRICT RULES:
+- ONLY report what is in the data payload. Do not invent interpretations.
+- NEVER say "I believe" or "might be" — report only what the data shows.
+- Keep your response under 150 words.
+- Be precise and data-driven. You may reference feature names and score values.
+- Structure your response as: (1) Recommendation summary, (2) Key drivers, (3) Suggested follow-up.
+- End with exactly ONE specific follow-up recommendation.
+"""
+
+RECO_LEARNER_USER_TEMPLATE = """
+Here are the pre-computed recommendation results for this student:
+
+Top recommended item: {item_id} (relevance score: {score:.3f})
+Explanation confidence (trust score): {trust_score}
+
+Top 3 reasons this item was recommended:
+{top3_features}
+
+Decision rule: {anchor_rule}
+
+Similar learners who benefited: {prototype_summary}
+
+Narrate this recommendation in plain, encouraging language for the student. Under 100 words. End with "Your next step: [one action]".
+"""
+
+RECO_INSTRUCTOR_USER_TEMPLATE = """
+Instructor profile: {learner_id} | Archetype: {instructor_archetype} | Style: {instructor_teaching_style} | Dept: {instructor_department}
+
+Student assigned: {item_id} | Priority score: {score:.4f}
+Student risk: {student_dropout_risk_score} ({student_risk_trajectory})
+Cohort avg dropout rate: {cohort_avg_dropout_rate}
+
+Trust score: {trust_score} | SHAP stability: {stability:.2f}
+Anchor precision: {anchor_precision:.0%}
+
+SHAP Top-3 attribution:
+{shap_top3}
+
+Decision rule: {anchor_rule}
+
+Recommended intervention: {intervention_type} ({intervention_urgency} urgency)
+Content type: {recommended_content_type} | Estimated effort: {estimated_effort_hours}h
+
+Feature interactions: {interaction_note}
+
+Summarise for the instructor. Under 150 words. Structure: student status → recommended intervention → rationale → follow-up action.
+"""
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Result dataclass
 # ──────────────────────────────────────────────────────────────────────────────
@@ -160,6 +227,80 @@ def _split_causal(causal_annotations: list) -> tuple[list[str], list[str]]:
         else:
             corr.append(feat)
     return causal, corr
+
+
+def _build_reco_learner_payload(explain_resp: dict, learner_id: str) -> str:
+    shap = explain_resp.get("shap_values", {})
+    item_id    = explain_resp.get("item_id", "recommended item")
+    score      = float(explain_resp.get("score", 0.0))
+    trust      = explain_resp.get("trust_score") or {}
+    trust_val  = trust.get("trust_score", "N/A") if isinstance(trust, dict) else "N/A"
+    anchor     = explain_resp.get("anchor_rule") or "No specific rule derived"
+    protos     = explain_resp.get("prototypes") or []
+    proto_summary = (
+        f"{len(protos)} similar learners found with avg similarity "
+        f"{round(sum(p.get('similarity', 0) for p in protos) / len(protos), 2)}"
+        if protos else "No similar learner data available"
+    )
+    return RECO_LEARNER_USER_TEMPLATE.format(
+        item_id         = item_id,
+        score           = score,
+        trust_score     = trust_val,
+        top3_features   = _format_top3_plain(shap),
+        anchor_rule     = anchor,
+        prototype_summary = proto_summary,
+    )
+
+
+def _build_reco_instructor_payload(explain_resp: dict, learner_id: str) -> str:
+    shap        = explain_resp.get("shap_values", {})
+    item_id     = explain_resp.get("item_id", "recommended item")
+    score       = float(explain_resp.get("score", 0.0))
+    stability   = float(explain_resp.get("shap_stability", 0.0))
+    trust       = explain_resp.get("trust_score") or {}
+    trust_val   = trust.get("trust_score", "N/A") if isinstance(trust, dict) else "N/A"
+    anchor      = explain_resp.get("anchor_rule") or "No anchor rule derived"
+    anchor_prec = float(explain_resp.get("anchor_precision", 0.0))
+    interactions = explain_resp.get("feature_interactions") or []
+    int_note    = (
+        f"{interactions[0]['features'][0]} \u2194 {interactions[0]['features'][1]} "
+        f"({interactions[0].get('direction', 'unknown')})"
+        if interactions else "No significant interactions"
+    )
+    # Instructor & student context fields (new rich instructor data)
+    inst_arch   = explain_resp.get("instructor_archetype", "unknown")
+    inst_style  = explain_resp.get("instructor_teaching_style", "unknown")
+    inst_dept   = explain_resp.get("instructor_department", "unknown")
+    stu_risk    = explain_resp.get("student_dropout_risk_score", "N/A")
+    stu_traj    = explain_resp.get("student_risk_trajectory", "unknown")
+    cohort_drop = explain_resp.get("cohort_avg_dropout_rate", "N/A")
+    if isinstance(cohort_drop, float):
+        cohort_drop = f"{cohort_drop:.1%}"
+    int_type    = explain_resp.get("intervention_type", "general")
+    int_urgency = explain_resp.get("intervention_urgency", "unknown")
+    cont_type   = explain_resp.get("recommended_content_type", "unknown")
+    effort      = explain_resp.get("estimated_effort_hours", "N/A")
+    return RECO_INSTRUCTOR_USER_TEMPLATE.format(
+        learner_id              = learner_id,
+        item_id                 = item_id,
+        score                   = score,
+        trust_score             = trust_val,
+        stability               = stability,
+        anchor_precision        = anchor_prec,
+        shap_top3               = _format_top3(shap),
+        anchor_rule             = anchor,
+        interaction_note        = int_note,
+        instructor_archetype    = inst_arch,
+        instructor_teaching_style = inst_style,
+        instructor_department   = inst_dept,
+        student_dropout_risk_score = stu_risk,
+        student_risk_trajectory = stu_traj,
+        cohort_avg_dropout_rate = cohort_drop,
+        intervention_type       = int_type,
+        intervention_urgency    = int_urgency,
+        recommended_content_type = cont_type,
+        estimated_effort_hours  = effort,
+    )
 
 
 def _build_learner_payload(explain_resp: dict, learner_id: str) -> str:
@@ -315,29 +456,40 @@ class LLMNarrator:
         explain_resp: dict,
         learner_id: str = "learner",
         audience: str = "both",
+        context_type: str = "dropout",
     ) -> NarrationResult:
         """
         Generate narrations for the requested audience(s).
 
         Parameters
         ----------
-        explain_resp : Full /explain response dict (pre-computed XAI data)
+        explain_resp : Full /explain or /recommend/explain response dict
         learner_id   : Learner identifier (for instructor narrative)
         audience     : "learner" | "instructor" | "both"
+        context_type : "dropout" | "recommendation" — selects prompt templates
         """
         learner_text    = None
         instructor_text = None
         total_tokens    = 0
 
-        if audience in ("learner", "both"):
-            pl = _build_learner_payload(explain_resp, learner_id)
-            learner_text, tok = self._call(LEARNER_SYSTEM_PROMPT, pl)
-            total_tokens += tok
-
-        if audience in ("instructor", "both"):
-            pi = _build_instructor_payload(explain_resp, learner_id)
-            instructor_text, tok = self._call(INSTRUCTOR_SYSTEM_PROMPT, pi)
-            total_tokens += tok
+        if context_type == "recommendation":
+            if audience in ("learner", "both"):
+                pl = _build_reco_learner_payload(explain_resp, learner_id)
+                learner_text, tok = self._call(RECO_LEARNER_SYSTEM_PROMPT, pl)
+                total_tokens += tok
+            if audience in ("instructor", "both"):
+                pi = _build_reco_instructor_payload(explain_resp, learner_id)
+                instructor_text, tok = self._call(RECO_INSTRUCTOR_SYSTEM_PROMPT, pi)
+                total_tokens += tok
+        else:
+            if audience in ("learner", "both"):
+                pl = _build_learner_payload(explain_resp, learner_id)
+                learner_text, tok = self._call(LEARNER_SYSTEM_PROMPT, pl)
+                total_tokens += tok
+            if audience in ("instructor", "both"):
+                pi = _build_instructor_payload(explain_resp, learner_id)
+                instructor_text, tok = self._call(INSTRUCTOR_SYSTEM_PROMPT, pi)
+                total_tokens += tok
 
         return NarrationResult(
             learner_text=learner_text,

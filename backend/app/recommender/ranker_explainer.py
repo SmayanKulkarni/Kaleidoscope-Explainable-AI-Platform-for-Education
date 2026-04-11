@@ -69,6 +69,16 @@ class RecommendationExplanation:
     causal_annotations:   Dict[str, str]
     shap_stability:       float            # 0–1, higher = more stable explanation
     plain_language:       str
+    # Feature 2: trust score
+    trust_score:          Optional[Dict[str, float]] = None
+    # Feature 3: Alibi anchor precision
+    anchor_precision:     float = 0.0
+    # Feature 5: KNN prototypes
+    prototypes:           List[Dict] = field(default_factory=list)
+    # Feature 1: LLM narration (set by endpoint, not explainer)
+    narratives:           Optional[Dict] = None
+    # Feature 6: explanation drift (set by endpoint, not explainer)
+    explanation_drift:    Optional[Dict] = None
 
     def to_dict(self) -> dict:
         return {
@@ -77,10 +87,15 @@ class RecommendationExplanation:
             "shap_values":          {k: round(v, 5) for k, v in self.shap_values.items()},
             "top_features":         self.top_features,
             "anchor_rule":          self.anchor_rule,
+            "anchor_precision":     round(self.anchor_precision, 4),
             "feature_interactions": self.feature_interactions,
             "causal_annotations":   self.causal_annotations,
             "shap_stability":       self.shap_stability,
             "plain_language":       self.plain_language,
+            "trust_score":          self.trust_score,
+            "prototypes":           self.prototypes,
+            "narratives":           self.narratives,
+            "explanation_drift":    self.explanation_drift,
         }
 
 
@@ -127,11 +142,41 @@ class RankerExplainer:
         feature_columns: List[str],
         encoder_maps: Dict[str, Dict[str, int]],
         causal_annotator=None,
+        X_train_sample: Optional[np.ndarray] = None,
+        reference_pool: Optional[pd.DataFrame] = None,
     ):
         self.model            = model
         self.feature_columns  = feature_columns
         self.encoder_maps     = encoder_maps
         self.causal_annotator = causal_annotator
+        self.reference_pool   = reference_pool
+        self._anchors_explainer = None
+
+        # Feature 3: initialise Alibi AnchorsExplainer if training sample is available
+        if X_train_sample is not None and len(X_train_sample) > 10:
+            try:
+                from backend.app.explainers.anchors_explainer import AnchorsExplainer as _AE
+                _X_df  = pd.DataFrame(X_train_sample, columns=self.feature_columns)
+                _scores = np.array(self.model.predict(_X_df), dtype=float)
+                _median = float(np.median(_scores))
+
+                def _pseudo_predict(X_np: np.ndarray) -> np.ndarray:
+                    X_df = pd.DataFrame(X_np, columns=self.feature_columns)
+                    preds = np.array(self.model.predict(X_df), dtype=float)
+                    return (preds >= _median).astype(int)
+
+                self._anchors_explainer = _AE(
+                    predict_fn    = _pseudo_predict,
+                    X_train       = X_train_sample,
+                    feature_names = self.feature_columns,
+                )
+                log.info("RankerExplainer: AnchorsExplainer initialised")
+            except Exception as _exc:
+                log.warning(
+                    "RankerExplainer: AnchorsExplainer init failed (%s) — template fallback",
+                    _exc,
+                )
+
         log.info(
             "RankerExplainer ready  features=%d  categoricals=%d",
             len(feature_columns), len(encoder_maps),
@@ -210,11 +255,12 @@ class RankerExplainer:
 
     # ── feature interactions ─────────────────────────────────────────────────
 
-    def _feature_interactions(
+    def _feature_interactions_product(
         self,
         shap_dict: Dict[str, float],
         top_k: int = 3,
     ) -> List[Dict[str, Any]]:
+        """Product-based |shap_i × shap_j| approximation (fallback)."""
         feats = self._top_features(shap_dict, k=min(8, len(shap_dict)))
         pairs: List[Dict[str, Any]] = []
         for i in range(len(feats)):
@@ -232,6 +278,44 @@ class RankerExplainer:
                 })
         pairs.sort(key=lambda p: p["strength"], reverse=True)
         return pairs[:top_k]
+
+    def _feature_interactions(
+        self,
+        X: pd.DataFrame,
+        shap_dict: Dict[str, float],
+        top_k: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """Feature 4: native LightGBM pred_interact with product-based fallback."""
+        try:
+            interact_raw = self.model.predict(X, pred_interact=True)
+            interact_arr = np.array(interact_raw)
+            if interact_arr.ndim == 3:
+                interact_mat = interact_arr[0]  # (n_features, n_features)
+            elif interact_arr.ndim == 2:
+                interact_mat = interact_arr
+            else:
+                raise ValueError(f"Unexpected interact shape: {interact_arr.shape}")
+            n = len(self.feature_columns)
+            pairs: List[Dict[str, Any]] = []
+            for i in range(n):
+                for j in range(i + 1, n):
+                    strength = abs(float(interact_mat[i, j]))
+                    if strength < 1e-12:
+                        continue
+                    pairs.append({
+                        "features":  [self.feature_columns[i], self.feature_columns[j]],
+                        "strength":  round(strength, 6),
+                        "direction": (
+                            "synergistic"
+                            if interact_mat[i, j] > 0
+                            else "opposing"
+                        ),
+                    })
+            pairs.sort(key=lambda p: p["strength"], reverse=True)
+            return pairs[:top_k]
+        except Exception as exc:
+            log.warning("pred_interact failed (%s) — using product approximation", exc)
+            return self._feature_interactions_product(shap_dict, top_k)
 
     # ── causal annotations ───────────────────────────────────────────────────
 
@@ -283,6 +367,100 @@ class RankerExplainer:
         n_feat       = len(self.feature_columns)
         normalised   = variance / max(n_feat ** 2, 1)
         return round(float(max(0.0, 1.0 - normalised * 20)), 4)
+
+    # ── anchor rule with Alibi + precision ─────────────────────────────────
+
+    def _anchor_rule_with_precision(
+        self,
+        raw_features: Dict[str, Any],
+        shap_dict: Dict[str, float],
+    ) -> tuple:
+        """Feature 3: Alibi AnchorTabular with template-based fallback."""
+        if self._anchors_explainer is not None:
+            try:
+                X = self._encode_row(raw_features)
+                encoded_dict = {
+                    col: float(X.values[0][i])
+                    for i, col in enumerate(self.feature_columns)
+                }
+                anchor_result = self._anchors_explainer.explain(encoded_dict)
+                ad = anchor_result.to_dict()
+                rule = ad.get("anchor_rule") or ad.get("human_readable") or ""
+                return rule, float(ad.get("precision", 0.0))
+            except Exception as exc:
+                log.warning("Alibi anchor failed (%s) — using template fallback", exc)
+        return self._anchor_rule(raw_features, shap_dict), 0.0
+
+    # ── trust score ──────────────────────────────────────────────────────────
+
+    def _compute_trust_score(
+        self,
+        X: pd.DataFrame,
+        score: float,
+        shap_row: np.ndarray,
+        stability: float,
+    ) -> Dict[str, float]:
+        """Feature 2: composite trust score (fidelity 40%, stability 35%, completeness 25%)."""
+        try:
+            contrib_full = np.array(self.model.predict(X, pred_contrib=True))[0]
+            bias         = float(contrib_full[-1])
+            shap_sum     = float(shap_row.sum())
+            fidelity     = float(
+                1.0 - min(abs(shap_sum + bias - score) / max(abs(score), 1e-8), 1.0)
+            )
+            abs_shap     = np.abs(shap_row)
+            total_abs    = float(abs_shap.sum())
+            top5_abs     = float(np.sort(abs_shap)[::-1][:5].sum())
+            completeness = float(top5_abs / max(total_abs, 1e-8))
+            trust        = 0.40 * fidelity + 0.35 * stability + 0.25 * completeness
+            return {
+                "trust_score":  round(trust, 4),
+                "fidelity":     round(fidelity, 4),
+                "stability":    round(stability, 4),
+                "completeness": round(completeness, 4),
+            }
+        except Exception as exc:
+            log.warning("Trust score computation failed (%s)", exc)
+            return {
+                "trust_score":  0.0,
+                "fidelity":     0.0,
+                "stability":    round(stability, 4),
+                "completeness": 0.0,
+            }
+
+    # ── KNN prototypes ───────────────────────────────────────────────────────
+
+    def _prototypes(
+        self,
+        X: pd.DataFrame,
+        K: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """Feature 5: K nearest neighbours from reference pool by Euclidean distance."""
+        if self.reference_pool is None or self.reference_pool.empty:
+            return []
+        try:
+            avail_cols = [c for c in self.feature_columns if c in self.reference_pool.columns]
+            if not avail_cols:
+                return []
+            query_vec = X[avail_cols].values[0].astype(float)
+            ref_mat   = self.reference_pool[avail_cols].values.astype(float)
+            diffs     = ref_mat - query_vec
+            dists     = np.sqrt((diffs ** 2).sum(axis=1))
+            top_idx   = np.argsort(dists)[:K]
+            result: List[Dict[str, Any]] = []
+            for idx in top_idx:
+                row        = self.reference_pool.iloc[idx]
+                similarity = round(1.0 / (1.0 + float(dists[idx])), 4)
+                result.append({
+                    "item_id":    str(row.get("item_id", idx)),
+                    "score":      round(float(row.get("score", 0.0)), 5),
+                    "similarity": similarity,
+                    "outcome":    str(row.get("outcome", "unknown")),
+                })
+            return result
+        except Exception as exc:
+            log.warning("Prototypes failed (%s)", exc)
+            return []
 
     # ── plain language ───────────────────────────────────────────────────────
 
@@ -346,16 +524,23 @@ class RankerExplainer:
         sv_row  = self._shap_matrix(X)[0]
         sd      = self._shap_dict(sv_row)
         top_f   = self._top_features(sd, k=5)
+        stability                = self._shap_stability(features)
+        anchor_rule_str, anchor_prec = self._anchor_rule_with_precision(features, sd)
+        trust_dict               = self._compute_trust_score(X, score, sv_row, stability)
+        prototypes               = self._prototypes(X)
         return RecommendationExplanation(
             item_id=item_id or str(features.get("item_id", "")),
             score=score,
             shap_values=sd,
             top_features=top_f,
-            anchor_rule=self._anchor_rule(features, sd),
-            feature_interactions=self._feature_interactions(sd),
+            anchor_rule=anchor_rule_str,
+            anchor_precision=anchor_prec,
+            feature_interactions=self._feature_interactions(X, sd),
             causal_annotations=self._causal_annotations(sd),
-            shap_stability=self._shap_stability(features),
+            shap_stability=stability,
             plain_language=self._plain_language(top_f, sd),
+            trust_score=trust_dict,
+            prototypes=prototypes,
         )
 
     def whatif(

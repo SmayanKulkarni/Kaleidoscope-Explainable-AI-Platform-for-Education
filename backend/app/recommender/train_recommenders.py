@@ -28,9 +28,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from backend.app.mlops.mlflow_config import configure_mlflow
 from backend.app.recommender.ranking_metrics import map_at_k, ndcg_at_k, recall_at_k
 
-RECO_DIR = PROJECT_ROOT / "data" / "synthetic" / "recommendations"
-MODELS_DIR = PROJECT_ROOT / "models" / "recommenders"
+RECO_DIR        = PROJECT_ROOT / "data" / "synthetic" / "recommendations"
+MODELS_DIR      = PROJECT_ROOT / "models" / "recommenders"
+PRECOMPUTED_DIR = PROJECT_ROOT / "data" / "recommendations" / "precomputed"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+PRECOMPUTED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -170,6 +172,41 @@ def _train_ranker(data: PreparedData, run_name: str, registered_model_name: str,
     return model, metrics
 
 
+def _build_topk_csv(
+    full_df: pd.DataFrame,
+    model,
+    data: PreparedData,
+    output_name: str,
+    top_k: int = 5,
+) -> Path:
+    """Precompute top-K items per query from the full dataset and save to precomputed/."""
+    query_col = data.metadata["query_col"]
+    enc_maps  = data.metadata["encoder_maps"]
+    feat_cols = data.feature_columns
+
+    rows: List[dict] = []
+    for query_id, group in full_df.groupby(query_col):
+        grp = group.reset_index(drop=True)
+        X_raw = pd.DataFrame(
+            {c: grp[c] if c in grp.columns else pd.Series(0.0, index=grp.index)
+             for c in feat_cols}
+        )
+        X_enc, _ = _cast_and_encode(X_raw, fit_maps=enc_maps)
+        scores    = model.predict(X_enc.values)
+        topk_idx  = np.argsort(scores)[::-1][:top_k]
+        for rank_pos, idx in enumerate(topk_idx, 1):
+            rec = grp.iloc[idx].to_dict()
+            rec["model_score"]     = float(scores[idx])
+            rec["precomputed_rank"] = rank_pos
+            rows.append(rec)
+
+    out_df   = pd.DataFrame(rows)
+    out_path = PRECOMPUTED_DIR / output_name
+    out_df.to_csv(out_path, index=False)
+    log.info("%s  rows=%d -> %s", output_name, len(out_df), out_path)
+    return out_path
+
+
 def _save_artifact(file_name: str, model, data: PreparedData, metrics: Dict[str, float]):
     path = MODELS_DIR / file_name
     with open(path, "wb") as f:
@@ -222,6 +259,8 @@ def main():
             "rank",
             "assignment_priority",
             "instructor_id",
+            "predicted_improvement_score",   # leaky — model-derived output
+            "priority_reason_tag",           # leaky — label summarising decision
         ],
         seed=args.seed,
     )
@@ -244,6 +283,10 @@ def main():
 
     sp = _save_artifact("student_ranker.pkl", student_model, student_data, student_metrics)
     ip = _save_artifact("instructor_ranker.pkl", instructor_model, instructor_data, instructor_metrics)
+
+    log.info("Building precomputed top-K CSVs ...")
+    _build_topk_csv(student_df,    student_model,    student_data,    "student_topk.csv",    top_k=5)
+    _build_topk_csv(instructor_df, instructor_model, instructor_data, "instructor_topk.csv", top_k=5)
 
     summary = {
         "student": student_metrics,

@@ -480,3 +480,77 @@ _simulations (default 1000, max 10_000).
 - Graceful degradation: all endpoints return HTTP 503 if the ranker wasn't loaded, never panic-crash.
 - Causal annotator is passed in from the dropout engine but is optional — unknown label used as fallback when features don't overlap.
 
+
+---
+
+## Entry — Monte Carlo /simulate End-to-End Fix
+
+**Date:** 2026-04-11
+**Sprint task:** Get `/simulate` endpoint returning real outcome distributions
+
+### Actions taken
+
+1. **Diagnosed stale server** — running server had old stub (`"Rust MC — Phase 5 pending"`); killed and restarted.
+2. **Fixed `shap_explainer.py` — CUDA device mismatch** — `torch.tensor(bg).to(device)` where `device = next(lstm_model.parameters()).device`.
+3. **Fixed `shap_explainer.py` — SHAP 1D output crash** — wrapped LSTM in `_OutputWrapper(nn.Module)` that calls `.unsqueeze(-1)` when `out.dim() == 1`, giving SHAP the `(N,1)` it expects.
+4. **Fixed `main.py` — fragile explainer startup** — wrapped `SHAPExplainer`, `ArchipelagoExplainer`, `DiCEExplainer`, `AnchorsExplainer`, `PrototypeExplainer`, `UncertaintyEstimator`, `CausalAnnotator`, `ActionRanker` inits in individual `try/except` so library compat issues no longer crash the whole server.
+5. **Root cause of /simulate 500** — `MonteCarloSimulator.simulate()` built `X_sim` from `FEATURE_COLUMNS` (12 cols) but GBM was trained on 18 features (12 + 3 engagement latents + 3 again — training artifact).
+6. **Fixed `temporal_builder.py`** — added `model_feature_names: list = None` param to `simulate()`; builds `X_sim` using `t.get(f, 0.0)` for each name → safely handles extra/duplicated feature names.
+7. **Fixed `main.py` endpoint** — passed `model_feature_names=state.feature_names` to `simulate()`.
+
+### Verified
+
+```python
+POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_rate=0.046
+```
+
+### Files changed
+- `backend/app/explainers/shap_explainer.py`
+- `backend/app/model/temporal_builder.py`
+- `backend/app/main.py`
+
+---
+
+### [2026-04-12] Cascade / Windsurf — REC_IMPS.md Features 1–6, 10–13 (all 10 features)
+
+- **Files Modified:**
+  - `backend/app/tracker/reco_consistency_store.py` *(new)*
+  - `backend/app/recommender/fairness_auditor.py` *(new)*
+  - `backend/app/recommender/ranker_explainer.py`
+  - `backend/app/narrator/llm_narrator.py`
+  - `backend/app/main.py`
+
+- **What was done:** Implemented all 10 recommendation engine features from `files/REC_IMPS.md`:
+  - **F1** — LLM narration for reco endpoints via `context_type="recommendation"` in `LLMNarrator.narrate()`; new `RECO_LEARNER/INSTRUCTOR_SYSTEM_PROMPT` + payload builders added to `llm_narrator.py`.
+  - **F2** — Trust score in `RankerExplainer._compute_trust_score()`: fidelity 40% + stability 35% + completeness 25%; stored in `RecommendationExplanation.trust_score`.
+  - **F3** — Alibi `AnchorTabular` anchor rule via `_anchor_rule_with_precision()`; pseudo-classifier wraps ranker at median score; `anchor_precision` field added; falls back to template.
+  - **F4** — Native LightGBM `pred_interact=True` feature interactions in `_feature_interactions(X, shap_dict)`; product-based fallback preserved as `_feature_interactions_product()`.
+  - **F5** — KNN prototype explainer `_prototypes(X, K=3)` using `student_topk.csv` reference pool loaded at startup; Euclidean distance on overlapping feature columns.
+  - **F6/F13** — `RecommendationExplanationStore` (new file, mirrors `consistency_store.py`); wired into `/recommend/student/explain`; drift detection via existing `ExplanationDriftDetector`.
+  - **F10** — `GET /causal/graph` endpoint returns DAG nodes (with ATE, group, is_causal) and edges derived from `CausalAnnotator` domain knowledge.
+  - **F11** — Diversity score on `/recommend/student` response: `n_unique_modules / top_k`; `diversity_warning` string when < 0.5.
+  - **F12** — `FairnessAuditor` (new file); audits mean score deviation (>15%) across protected groups; wired into `/recommend/student` response.
+
+- **Why it was done:** Brings Recommendation Engine to XAI parity with Dropout Risk Engine per `REC_IMPS.md` sprint plan.
+
+- **Dependencies/Impacts:** All new `RecommendationExplanation` fields have defaults (None/0.0/[]); all state attributes guarded with `if state.X is not None`; existing dropout endpoints untouched.
+
+---
+
+### Entry 2025 — Instructor Data Upgrade (9 → 34 features) + Frontend Integration Plan
+
+- **Action:** Upgraded instructor recommendation engine to use richer dataset and created agent-ready frontend integration plan.
+
+- **Files modified:**
+  - `backend/app/recommender/train_recommenders.py` — Added `PRECOMPUTED_DIR`; updated instructor `drop_cols` to exclude leaky columns (`predicted_improvement_score`, `priority_reason_tag`); added `_build_topk_csv()` helper; now auto-generates both `student_topk.csv` and `instructor_topk.csv` after training.
+  - `models/recommenders/instructor_ranker.pkl` — Retrained. 9 features → 34 features. NDCG@3=0.993, MAP@3=0.982.
+  - `data/recommendations/precomputed/instructor_topk.csv` — Regenerated with 1750 rows covering 350 instructors × 5 top-K items using new 34-feature model.
+  - `data/recommendations/precomputed/student_topk.csv` — Regenerated (49842 rows) to ensure reference pool consistency.
+  - `backend/app/main.py` — Load `instructor_topk.csv` as reference pool in lifespan; refactored `_ref_source` selection to handle both student and instructor rankers; `/recommend/instructor` now returns `diversity_score` (by `intervention_type`/`recommended_content_type`), `diversity_warning`, and `fairness_audit` (across `instructor_department`, `instructor_archetype`, `instructor_teaching_style`); `/recommend/instructor/explain` now passes 10 intervention metadata fields through response (`intervention_type`, `intervention_urgency`, `recommended_content_type`, `estimated_effort_hours`, `student_dropout_risk_score`, `student_risk_trajectory`, `instructor_archetype`, `instructor_teaching_style`, `instructor_department`, `cohort_avg_dropout_rate`).
+  - `backend/app/narrator/llm_narrator.py` — `RECO_INSTRUCTOR_USER_TEMPLATE` expanded with instructor profile, student risk trajectory, cohort dropout rate, intervention type/urgency/content, effort hours; `_build_reco_instructor_payload()` extracts all 10 new fields with graceful defaults.
+  - `docs/FRONTEND_BACKEND_INTEGRATION.md` — Updated Recommendation Engine table with new response shapes; added full `InstructorRecoItem` 34-field TypeScript schema (§1b); added `InstructorExplainResponse` TypeScript interface; added `GET /causal/graph` to endpoint table.
+  - `docs/XAI_INTEGRATION_PLAN.md` — Created. 11-section agent-ready plan: discovery checklist, API layer updates (typed interfaces), updated component specs (TrustScoreCard, AnchorRuleCard, RecommendationList), 7 new component specs (NarrativeCard, PrototypesCard, ExplanationDriftBanner, FairnessAuditPanel, InterventionMetaCard, CausalDagGraph, InstructorStudentCard), page integration steps, request body builder utility, new hooks, 8-phase ordered implementation checklist, mock fixture data for all new response fields, testing checklist.
+
+- **Why it was done:** Instructor dataset was upgraded from 9 to 40 columns. Old model could not leverage instructor teaching style, department, experience, student academic metrics, cohort stats, or intervention metadata. Retrained model now captures these signals. Plan was created to guide a separate frontend IDE agent to integrate all backend updates without requiring manual discovery.
+
+- **Dependencies/Impacts:** `instructor_ranker.pkl` is a breaking change for any caller using the old 9-feature schema — all callers must now send 34 features. Backend is backward-compatible: missing features default to 0 via `_cast_and_encode`. Frontend must update its instructor recommendation request builder (see `docs/XAI_INTEGRATION_PLAN.md § Part 6`).

@@ -64,6 +64,8 @@ from backend.app.tracker.consistency_store import ExplanationStore
 from backend.app.tracker.drift_detector import ExplanationDriftDetector
 from backend.app.model.temporal_builder import MonteCarloSimulator
 from backend.app.recommender.ranker_explainer import RankerExplainer
+from backend.app.recommender.fairness_auditor import FairnessAuditor
+from backend.app.tracker.reco_consistency_store import RecommendationExplanationStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
@@ -110,6 +112,8 @@ class AppState:
     canary_fraction: float = 0.0
     student_ranker_explainer: Optional[RankerExplainer] = None
     instructor_ranker_explainer: Optional[RankerExplainer] = None
+    reco_explanation_store: Optional[RecommendationExplanationStore] = None
+    fairness_auditor: Optional[FairnessAuditor] = None
 
 
 state = AppState()
@@ -192,67 +196,87 @@ async def lifespan(app: FastAPI):
 
     # ── Phase 2: Explainers + Evaluators ──
     if state.gbm_model is not None and state.feature_names:
-        state.shap_explainer = SHAPExplainer(
-            gbm_model     = state.gbm_model,
-            feature_names = state.feature_names,
-            lstm_model    = state.lstm_model,
-            X_background  = _X_background,
-        )
-        log.info("SHAPExplainer initialised")
-
-        state.archipelago_explainer = ArchipelagoExplainer(
-            tree_explainer = state.shap_explainer.tree_explainer,
-            feature_names  = state.feature_names,
-        )
-        log.info("ArchipelagoExplainer initialised")
+        try:
+            state.shap_explainer = SHAPExplainer(
+                gbm_model     = state.gbm_model,
+                feature_names = state.feature_names,
+                lstm_model    = state.lstm_model,
+                X_background  = _X_background,
+            )
+            log.info("SHAPExplainer initialised")
+            state.archipelago_explainer = ArchipelagoExplainer(
+                tree_explainer = state.shap_explainer.tree_explainer,
+                feature_names  = state.feature_names,
+            )
+            log.info("ArchipelagoExplainer initialised")
+        except Exception as _shap_err:
+            log.warning("SHAPExplainer/ArchipelagoExplainer failed to initialise: %s", _shap_err)
 
     if state.gbm_model is not None and state.X_train is not None:
-        state.dice_explainer = DiCEExplainer(
-            model         = state.gbm_model,
-            X_train       = state.X_train,
-            feature_names = state.feature_names,
-            y_train       = state.y_train,
-        )
-        log.info("DiCEExplainer initialised")
+        try:
+            state.dice_explainer = DiCEExplainer(
+                model         = state.gbm_model,
+                X_train       = state.X_train,
+                feature_names = state.feature_names,
+                y_train       = state.y_train,
+            )
+            log.info("DiCEExplainer initialised")
+        except Exception as _dice_err:
+            log.warning("DiCEExplainer failed to initialise (dice_ml/pandas compat): %s", _dice_err)
 
         def _predict_fn(X):
             return (state.gbm_model.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
-        state.anchors_explainer = AnchorsExplainer(
-            predict_fn    = _predict_fn,
-            X_train       = state.X_train,
-            feature_names = state.feature_names,
-        )
-        log.info("AnchorsExplainer initialised")
+        try:
+            state.anchors_explainer = AnchorsExplainer(
+                predict_fn    = _predict_fn,
+                X_train       = state.X_train,
+                feature_names = state.feature_names,
+            )
+            log.info("AnchorsExplainer initialised")
+        except Exception as _anchors_err:
+            log.warning("AnchorsExplainer failed to initialise: %s", _anchors_err)
 
-        state.prototype_explainer = PrototypeExplainer(
-            X_train       = state.X_train,
-            y_train       = state.y_train,
-            learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
-            feature_names = state.feature_names,
-        )
-        log.info("PrototypeExplainer initialised")
+        try:
+            state.prototype_explainer = PrototypeExplainer(
+                X_train       = state.X_train,
+                y_train       = state.y_train,
+                learner_ids   = state.learner_ids if state.learner_ids is not None else np.arange(len(state.X_train)),
+                feature_names = state.feature_names,
+            )
+            log.info("PrototypeExplainer initialised")
+        except Exception as _proto_err:
+            log.warning("PrototypeExplainer failed to initialise: %s", _proto_err)
 
-        state.uncertainty_estimator = UncertaintyEstimator(
-            model = state.gbm_model,
-            X_cal = state.X_train,
-            y_cal = state.y_train,
-        )
-        log.info("UncertaintyEstimator initialised")
+        try:
+            state.uncertainty_estimator = UncertaintyEstimator(
+                model = state.gbm_model,
+                X_cal = state.X_train,
+                y_cal = state.y_train,
+            )
+            log.info("UncertaintyEstimator initialised")
+        except Exception as _unc_err:
+            log.warning("UncertaintyEstimator failed to initialise: %s", _unc_err)
 
-        state.causal_annotator = CausalAnnotator(
-            X_train       = state.X_train,
-            y_train       = state.y_train,
-            feature_names = state.feature_names,
-        )
-        log.info("CausalAnnotator initialised (DoWhy)")
+        try:
+            state.causal_annotator = CausalAnnotator(
+                X_train       = state.X_train,
+                y_train       = state.y_train,
+                feature_names = state.feature_names,
+            )
+            log.info("CausalAnnotator initialised (DoWhy)")
+        except Exception as _causal_err:
+            log.warning("CausalAnnotator failed to initialise: %s", _causal_err)
 
-        state.action_ranker = ActionRanker(
-            feature_names    = state.feature_names,
-            X_train          = state.X_train,
-            causal_annotator = state.causal_annotator,
-        )
-        log.info("ActionRanker initialised")
+        try:
+            state.action_ranker = ActionRanker(
+                feature_names    = state.feature_names,
+                X_train          = state.X_train,
+                causal_annotator = state.causal_annotator,
+            )
+            log.info("ActionRanker initialised")
+        except Exception as _ar_err:
+            log.warning("ActionRanker failed to initialise: %s", _ar_err)
 
     state.trust_scorer    = TrustScorer()
     state.explanation_store = ExplanationStore()
@@ -295,6 +319,26 @@ async def lifespan(app: FastAPI):
         log.warning("transitions.pkl not found — /simulate will return empty distributions")
 
     # ── Recommendation Rankers ──
+    # Feature 5: load student & instructor reference pools for KNN prototypes
+    import pandas as _pd
+    _topk_path    = DATA_DIR / "recommendations" / "precomputed" / "student_topk.csv"
+    _reco_ref_pool = None
+    if _topk_path.exists():
+        try:
+            _reco_ref_pool = _pd.read_csv(_topk_path)
+            log.info("Student reco reference pool loaded  rows=%d", len(_reco_ref_pool))
+        except Exception as _e:
+            log.warning("Failed to load student_topk.csv: %s", _e)
+
+    _instr_topk_path = DATA_DIR / "recommendations" / "precomputed" / "instructor_topk.csv"
+    _instr_ref_pool  = None
+    if _instr_topk_path.exists():
+        try:
+            _instr_ref_pool = _pd.read_csv(_instr_topk_path)
+            log.info("Instructor reco reference pool loaded  rows=%d", len(_instr_ref_pool))
+        except Exception as _e:
+            log.warning("Failed to load instructor_topk.csv: %s", _e)
+
     _reco_models_dir = MODELS_DIR / "recommenders"
     for _pkl_name, _attr in [
         ("student_ranker.pkl",    "student_ranker_explainer"),
@@ -304,15 +348,47 @@ async def lifespan(app: FastAPI):
         if _rp.exists():
             with open(_rp, "rb") as _f:
                 _art = pickle.load(_f)
+            _feat_cols = _art["feature_columns"]
+
+            # Feature 3 & 5: build X_train_sample from reference pool
+            _X_sample, _pool = None, None
+            _ref_source = (
+                _reco_ref_pool  if _attr == "student_ranker_explainer"    else
+                _instr_ref_pool if _attr == "instructor_ranker_explainer" else None
+            )
+            if _ref_source is not None:
+                _pool  = _ref_source
+                _avail = [c for c in _feat_cols if c in _ref_source.columns]
+                if len(_avail) >= 3:
+                    try:
+                        _ps = _ref_source.dropna(subset=_avail).head(500)
+                        if len(_ps) > 10:
+                            _Xf = _pd.DataFrame(0.0, index=range(len(_ps)), columns=_feat_cols)
+                            for _c in _avail:
+                                _Xf[_c] = _ps[_c].values
+                            _X_sample = _Xf.values.astype(float)
+                    except Exception as _xe:
+                        log.warning("%s X_train_sample build failed: %s", _attr, _xe)
+
             setattr(state, _attr, RankerExplainer(
                 model           = _art["model"],
-                feature_columns = _art["feature_columns"],
+                feature_columns = _feat_cols,
                 encoder_maps    = _art["metadata"]["encoder_maps"],
                 causal_annotator= state.causal_annotator,
+                X_train_sample  = _X_sample,
+                reference_pool  = _pool,
             ))
-            log.info("%s loaded  features=%d", _attr, len(_art["feature_columns"]))
+            log.info("%s loaded  features=%d", _attr, len(_feat_cols))
         else:
             log.warning("%s not found — run train_recommenders.py", _pkl_name)
+
+    # Feature 6/13: Recommendation explanation store
+    state.reco_explanation_store = RecommendationExplanationStore()
+    log.info("RecommendationExplanationStore initialised")
+
+    # Feature 12: Fairness auditor
+    state.fairness_auditor = FairnessAuditor()
+    log.info("FairnessAuditor initialised")
 
     log.info("Startup complete — device=%s", DEVICE)
     yield
@@ -825,6 +901,7 @@ def simulate(req: SimulateRequest):
         target_week=req.target_week,
         n_simulations=req.n_simulations,
         model=state.gbm_model,
+        model_feature_names=state.feature_names,
     )
     # Strip individual trajectories from the response (too large)
     result.pop("trajectories", None)
@@ -1190,6 +1267,7 @@ class StudentRecoExplainRequest(BaseModel):
     learner_id: str = "anonymous"
     features:   Dict[str, Any]   # combined learner + item features (one row)
     item_id:    str = ""
+    audience:   str = "learner"   # "learner" | "instructor" | "both"
 
 
 class StudentRecoWhatIfRequest(BaseModel):
@@ -1209,6 +1287,7 @@ class InstructorRecoExplainRequest(BaseModel):
     instructor_id: str = "anonymous"
     features:      Dict[str, Any]
     item_id:       str = ""
+    audience:      str = "instructor"   # "learner" | "instructor" | "both"
 
 
 class InstructorRecoWhatIfRequest(BaseModel):
@@ -1234,7 +1313,70 @@ def _merge_item(item: RecoItem) -> Dict[str, Any]:
     return {"item_id": item.item_id, **item.features}
 
 
-# ── /recommend/health ─────────────────────────────────────────────────────────
+# ── /causal/graph ─────────────────────────────────────────────────────────
+
+@app.get("/causal/graph")
+def causal_graph():
+    """Feature 10: return the causal DAG as a JSON structure for frontend rendering."""
+    if state.causal_annotator is None:
+        raise HTTPException(503, "Causal annotator not initialised")
+
+    effects = state.causal_annotator.get_causal_effects()
+
+    _groups = {
+        "confounder":  ["prior_course_completions", "current_week_in_course"],
+        "engagement":  ["login_frequency_weekly", "avg_session_duration_min",
+                        "forum_posts_count", "help_requests_count"],
+        "performance": ["quiz_avg_score", "quiz_completion_rate",
+                        "assignment_submission_rate", "video_completion_rate"],
+        "risk_signal": ["days_since_last_activity", "missed_deadlines_count"],
+    }
+
+    nodes = []
+    for group, members in _groups.items():
+        for node_id in members:
+            effect = effects.get(node_id)
+            nodes.append({
+                "id":              node_id,
+                "label":           node_id.replace("_", " ").title(),
+                "group":           group,
+                "is_causal":       effect.is_causal if effect else False,
+                "ate":             round(effect.ate, 6) if effect else 0.0,
+                "effect_direction": effect.effect_direction if effect else "neutral",
+            })
+    nodes.append({
+        "id":              "dropout_risk",
+        "label":           "Dropout Risk",
+        "group":           "outcome",
+        "is_causal":       True,
+        "ate":             0.0,
+        "effect_direction": "neutral",
+    })
+
+    _conf = ["prior_course_completions", "current_week_in_course"]
+    _eng  = ["login_frequency_weekly", "avg_session_duration_min",
+             "forum_posts_count", "help_requests_count"]
+    _perf = ["quiz_avg_score", "quiz_completion_rate",
+             "assignment_submission_rate", "video_completion_rate"]
+    _risk = ["days_since_last_activity", "missed_deadlines_count"]
+    _out  = "dropout_risk"
+
+    edges = []
+    for c in _conf:
+        for e in _eng:  edges.append({"from": c, "to": e})
+        for p in _perf: edges.append({"from": c, "to": p})
+        edges.append({"from": c, "to": _out})
+    for e in _eng:
+        for p in _perf: edges.append({"from": e, "to": p})
+        for r in _risk: edges.append({"from": e, "to": r})
+        edges.append({"from": e, "to": _out})
+    for p in _perf: edges.append({"from": p, "to": _out})
+    for r in _risk: edges.append({"from": r, "to": _out})
+
+    return {"nodes": nodes, "edges": edges}
+
+
+# ── /recommend/health ─────────────────────────────────────────────────────
 
 @app.get("/recommend/health")
 def recommend_health():
@@ -1275,11 +1417,43 @@ def recommend_student(req: StudentRecoRequest):
         top_k=req.top_k,
         include_shap=req.include_shap,
     )
-    return {
-        "learner_id":      req.learner_id,
-        "top_k":           req.top_k,
-        "recommendations": [s.to_dict() for s in scored],
+
+    # Feature 11: Diversity score
+    _id_to_feats = {
+        str(it.item_id) if it.item_id else str(i): it.features
+        for i, it in enumerate(req.items)
     }
+    _modules = [
+        str(_id_to_feats.get(s.item_id, {}).get(
+            "recommended_module",
+            _id_to_feats.get(s.item_id, {}).get("module", ""),
+        ))
+        for s in scored
+    ]
+    _modules = [m for m in _modules if m]
+    _diversity = round(len(set(_modules)) / len(scored), 4) if scored else 0.0
+    _div_warn  = (
+        "Low diversity: recommendations are concentrated in few modules. "
+        "Consider exploring other topics."
+        if _diversity < 0.5 and scored
+        else None
+    )
+
+    resp = {
+        "learner_id":        req.learner_id,
+        "top_k":             req.top_k,
+        "recommendations":   [s.to_dict() for s in scored],
+        "diversity_score":   _diversity,
+        "diversity_warning": _div_warn,
+    }
+
+    # Feature 12: Fairness audit
+    if state.fairness_auditor is not None and scored:
+        _s_feats  = [_id_to_feats.get(s.item_id, {}) for s in scored]
+        _s_scores = [s.score for s in scored]
+        resp["fairness_audit"] = state.fairness_auditor.audit(_s_feats, _s_scores).to_dict()
+
+    return resp
 
 
 @app.post("/recommend/student/explain")
@@ -1301,6 +1475,39 @@ def recommend_student_explain(req: StudentRecoExplainRequest):
         features=req.features,
         item_id=req.item_id,
     )
+
+    # Feature 6: persist to reco explanation store + drift detection
+    if state.reco_explanation_store is not None:
+        _top3 = explanation.top_features[:3]
+        _ts   = (
+            explanation.trust_score.get("trust_score")
+            if explanation.trust_score else None
+        )
+        state.reco_explanation_store.save(
+            learner_id    = req.learner_id,
+            score         = explanation.score,
+            shap_values   = explanation.shap_values,
+            top3_features = _top3,
+            trust_score   = _ts,
+            anchor_rule   = explanation.anchor_rule,
+        )
+        if state.drift_detector is not None:
+            _drift = state.drift_detector.check_learner_drift(
+                req.learner_id, state.reco_explanation_store
+            )
+            explanation.explanation_drift = _drift.to_dict() if _drift else None
+
+    # Feature 1: LLM narration with recommendation context
+    if state.llm_narrator is not None:
+        _reco_dict = {"learner_id": req.learner_id, **explanation.to_dict()}
+        _narration = state.llm_narrator.narrate(
+            explain_resp = _reco_dict,
+            learner_id   = req.learner_id,
+            audience     = req.audience,
+            context_type = "recommendation",
+        )
+        explanation.narratives = _narration.to_dict()
+
     return {"learner_id": req.learner_id, **explanation.to_dict()}
 
 
@@ -1341,11 +1548,46 @@ def recommend_instructor(req: InstructorRecoRequest):
         top_k=req.top_k,
         include_shap=req.include_shap,
     )
-    return {
-        "instructor_id":   req.instructor_id,
-        "top_k":           req.top_k,
-        "recommendations": [s.to_dict() for s in scored],
+
+    # Diversity by intervention_type
+    _i_id_to_feats = {
+        str(it.item_id) if it.item_id else str(i): it.features
+        for i, it in enumerate(req.items)
     }
+    _int_types = [
+        str(_i_id_to_feats.get(s.item_id, {}).get(
+            "intervention_type",
+            _i_id_to_feats.get(s.item_id, {}).get("recommended_content_type", ""),
+        ))
+        for s in scored
+    ]
+    _int_types   = [t for t in _int_types if t]
+    _i_diversity = round(len(set(_int_types)) / len(scored), 4) if scored else 0.0
+    _i_div_warn  = (
+        "Low diversity: all interventions are the same type. Consider diversifying approach."
+        if _i_diversity < 0.5 and scored
+        else None
+    )
+
+    i_resp = {
+        "instructor_id":     req.instructor_id,
+        "top_k":             req.top_k,
+        "recommendations":   [s.to_dict() for s in scored],
+        "diversity_score":   _i_diversity,
+        "diversity_warning": _i_div_warn,
+    }
+
+    # Fairness audit across instructor_department and instructor_archetype
+    if state.fairness_auditor is not None and scored:
+        _i_feats  = [_i_id_to_feats.get(s.item_id, {}) for s in scored]
+        _i_scores = [s.score for s in scored]
+        _i_audit  = FairnessAuditor(
+            protected_features=["instructor_department", "instructor_archetype",
+                                 "instructor_teaching_style"]
+        ).audit(_i_feats, _i_scores)
+        i_resp["fairness_audit"] = _i_audit.to_dict()
+
+    return i_resp
 
 
 @app.post("/recommend/instructor/explain")
@@ -1359,7 +1601,33 @@ def recommend_instructor_explain(req: InstructorRecoExplainRequest):
         features=req.features,
         item_id=req.item_id,
     )
-    return {"instructor_id": req.instructor_id, **explanation.to_dict()}
+
+    # Intervention metadata passthrough
+    _INSTR_META_KEYS = (
+        "intervention_type", "intervention_urgency",
+        "recommended_content_type", "estimated_effort_hours",
+        "student_dropout_risk_score", "student_risk_trajectory",
+        "instructor_archetype", "instructor_teaching_style",
+        "instructor_department", "cohort_avg_dropout_rate",
+    )
+    _instr_meta = {k: req.features[k] for k in _INSTR_META_KEYS if k in req.features}
+
+    # Feature 1: LLM narration with recommendation context
+    if state.llm_narrator is not None:
+        _reco_dict = {
+            "instructor_id": req.instructor_id,
+            **explanation.to_dict(),
+            **_instr_meta,
+        }
+        _narration = state.llm_narrator.narrate(
+            explain_resp = _reco_dict,
+            learner_id   = req.instructor_id,
+            audience     = req.audience,
+            context_type = "recommendation",
+        )
+        explanation.narratives = _narration.to_dict()
+
+    return {"instructor_id": req.instructor_id, **explanation.to_dict(), **_instr_meta}
 
 
 @app.post("/recommend/instructor/whatif")

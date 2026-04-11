@@ -93,8 +93,18 @@ class SHAPExplainer:
         if lstm_model is not None and X_background is not None:
             log.info("Initialising DeepExplainer …")
             import torch
-            bg = torch.tensor(X_background, dtype=torch.float32)
-            self.deep_explainer = shap.DeepExplainer(lstm_model, bg)
+            import torch.nn as _nn
+            device = next(lstm_model.parameters()).device
+            bg = torch.tensor(X_background, dtype=torch.float32).to(device)
+
+            class _OutputWrapper(_nn.Module):
+                """Ensures forward() returns (batch, 1) for SHAP's DeepExplainer."""
+                def __init__(self, m): super().__init__(); self.m = m
+                def forward(self, x):
+                    out = self.m(x)
+                    return out.unsqueeze(-1) if out.dim() == 1 else out
+
+            self.deep_explainer = shap.DeepExplainer(_OutputWrapper(lstm_model), bg)
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
