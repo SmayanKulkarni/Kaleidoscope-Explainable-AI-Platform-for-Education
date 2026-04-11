@@ -1,0 +1,104 @@
+name: ML Retrain & Redeploy
+
+on:
+  # Manual trigger with optional min_events parameter
+  workflow_dispatch:
+    inputs:
+      min_events:
+        description: "Minimum new events required before retraining (0 = no guard)"
+        required: false
+        default: "50"
+      force_reload:
+        description: "Hot-reload model into live server after retrain"
+        type: boolean
+        required: false
+        default: true
+
+  # Scheduled: every Sunday at 02:00 UTC (off-peak)
+  schedule:
+    - cron: "0 2 * * 0"
+
+jobs:
+  retrain:
+    name: Trigger Retrain + Hot-Reload
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Trigger POST /mlops/retrain on live server
+        id: retrain
+        run: |
+          MIN_EVENTS="${{ github.event.inputs.min_events || '50' }}"
+          echo "Calling /mlops/retrain with min_events=${MIN_EVENTS}"
+
+          RESPONSE=$(curl -sf -X POST \
+            "http://${{ secrets.EC2_HOST }}:8000/mlops/retrain?min_events=${MIN_EVENTS}" \
+            -H "Content-Type: application/json" \
+            --max-time 1800 \
+            -w "\nHTTP_STATUS:%{http_code}")
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep -o "HTTP_STATUS:[0-9]*" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response: $BODY"
+
+          # Parse success field from JSON response
+          SUCCESS=$(echo "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('success', False))" 2>/dev/null || echo "false")
+
+          echo "retrain_success=${SUCCESS}" >> "$GITHUB_OUTPUT"
+          echo "retrain_response<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: /mlops/retrain returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: Hot-reload model (if retrain succeeded)
+        id: reload
+        if: steps.retrain.outputs.retrain_success == 'True' && (github.event.inputs.force_reload == 'true' || github.event_name == 'schedule')
+        run: |
+          echo "Calling /mlops/reload to hot-swap model into live server"
+
+          RESPONSE=$(curl -sf -X POST \
+            "http://${{ secrets.EC2_HOST }}:8000/mlops/reload" \
+            -H "Content-Type: application/json" \
+            --max-time 120 \
+            -w "\nHTTP_STATUS:%{http_code}")
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep -o "HTTP_STATUS:[0-9]*" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS/d')
+
+          echo "Reload response: $BODY"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: /mlops/reload returned HTTP $HTTP_STATUS"
+            echo "BODY: $BODY"
+            exit 1
+          fi
+
+          echo "reload_response<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify health after reload
+        if: steps.reload.outcome == 'success'
+        run: |
+          sleep 15
+          curl -sf "http://${{ secrets.EC2_HOST }}:8000/health" || exit 1
+          echo "Health check passed after model reload"
+
+      - name: Retrain summary
+        if: always()
+        run: |
+          echo "### ML Retrain Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Retrain success**: ${{ steps.retrain.outputs.retrain_success }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Reload performed**: ${{ steps.reload.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Retrain response:**" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.retrain.outputs.retrain_response }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

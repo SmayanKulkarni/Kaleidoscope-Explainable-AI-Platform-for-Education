@@ -1,0 +1,23 @@
+{
+  "_description": "High-risk learner fixture — minimal engagement, missed deadlines, disengaged",
+  "_usage": "POST /explain with this as the 'features' body",
+  "features": {
+    "login_frequency_weekly": 1.0,
+    "avg_session_duration_min": 8.0,
+    "forum_posts_count": 0,
+    "video_completion_rate": 0.18,
+    "quiz_avg_score": 34.5,
+    "quiz_completion_rate": 0.25,
+    "assignment_submission_rate": 0.20,
+    "days_since_last_activity": 12,
+    "prior_course_completions": 0,
+    "current_week_in_course": 7,
+    "missed_deadlines_count": 4,
+    "help_requests_count": 0,
+    "engagement_latent_1": 0.0,
+    "engagement_latent_2": 0.0,
+    "engagement_latent_3": 0.0
+  },
+  "learner_id": "fixture-high-risk-001",
+  "audience": "both"
+}

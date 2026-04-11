@@ -1,0 +1,57 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Dev tools
+.agents/
+.claude/
+.code-review-graph/
+code-review-graph/
+.mcp.json
+.opencode.json
+.windsurfrules
+.cursorrules
+.clinerules
+.windsurf/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Data — raw files are large; fixtures are copied explicitly
+data/raw/
+data/temporal/
+data/learners.csv
+data/*.pkl
+data/*.db
+
+# Models — downloaded from S3 at runtime
+models/
+
+# MLflow runs — not needed in container
+mlruns/
+
+# Docs / plans
+files/
+scripts/
+
+# Terraform state
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/.terraform.lock.hcl
+
+# Secrets
+.env
+*.env.local

@@ -31,6 +31,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
+from backend.app.db_config import make_engine
+
 log = logging.getLogger(__name__)
 
 Base = declarative_base()
@@ -66,11 +68,18 @@ class ExplanationRecord(Base):
 
 
 class ExplanationStore:
-    def __init__(self, db_url: str = "sqlite:///data/explanations.db"):
-        self.engine  = create_engine(db_url, echo=False)
+    def __init__(self, db_url: str = ""):
+        if db_url:
+            self.engine = create_engine(
+                db_url,
+                connect_args={"check_same_thread": False} if db_url.startswith("sqlite") else {},
+                echo=False,
+            )
+        else:
+            self.engine = make_engine("explanations")
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
-        log.info("ExplanationStore initialised  db=%s", db_url)
+        log.info("ExplanationStore initialised")
 
     def save(
         self,

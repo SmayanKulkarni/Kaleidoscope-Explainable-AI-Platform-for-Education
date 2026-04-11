@@ -1,0 +1,73 @@
+{
+  "_description": "Temporal sequence fixture — same learner at weeks 2,4,6,8,10,12 showing declining engagement",
+  "_usage": "POST /simulate — shows trajectory from low-risk at week 2 degrading to high-risk by week 10",
+  "learner_id": "fixture-temporal-001",
+  "weekly_snapshots": [
+    {
+      "week": 2,
+      "features": {
+        "login_frequency_weekly": 5.5, "avg_session_duration_min": 60.0,
+        "forum_posts_count": 4, "video_completion_rate": 0.85,
+        "quiz_avg_score": 74.0, "quiz_completion_rate": 0.90,
+        "assignment_submission_rate": 0.95, "days_since_last_activity": 1,
+        "prior_course_completions": 1, "current_week_in_course": 2,
+        "missed_deadlines_count": 0, "help_requests_count": 2
+      }
+    },
+    {
+      "week": 4,
+      "features": {
+        "login_frequency_weekly": 4.0, "avg_session_duration_min": 45.0,
+        "forum_posts_count": 3, "video_completion_rate": 0.72,
+        "quiz_avg_score": 65.0, "quiz_completion_rate": 0.78,
+        "assignment_submission_rate": 0.80, "days_since_last_activity": 2,
+        "prior_course_completions": 1, "current_week_in_course": 4,
+        "missed_deadlines_count": 1, "help_requests_count": 1
+      }
+    },
+    {
+      "week": 6,
+      "features": {
+        "login_frequency_weekly": 2.5, "avg_session_duration_min": 28.0,
+        "forum_posts_count": 1, "video_completion_rate": 0.55,
+        "quiz_avg_score": 52.0, "quiz_completion_rate": 0.60,
+        "assignment_submission_rate": 0.58, "days_since_last_activity": 4,
+        "prior_course_completions": 1, "current_week_in_course": 6,
+        "missed_deadlines_count": 2, "help_requests_count": 1
+      }
+    },
+    {
+      "week": 8,
+      "features": {
+        "login_frequency_weekly": 1.5, "avg_session_duration_min": 15.0,
+        "forum_posts_count": 0, "video_completion_rate": 0.38,
+        "quiz_avg_score": 42.0, "quiz_completion_rate": 0.42,
+        "assignment_submission_rate": 0.35, "days_since_last_activity": 7,
+        "prior_course_completions": 1, "current_week_in_course": 8,
+        "missed_deadlines_count": 3, "help_requests_count": 0
+      }
+    },
+    {
+      "week": 10,
+      "features": {
+        "login_frequency_weekly": 0.5, "avg_session_duration_min": 6.0,
+        "forum_posts_count": 0, "video_completion_rate": 0.22,
+        "quiz_avg_score": 31.0, "quiz_completion_rate": 0.28,
+        "assignment_submission_rate": 0.20, "days_since_last_activity": 11,
+        "prior_course_completions": 1, "current_week_in_course": 10,
+        "missed_deadlines_count": 5, "help_requests_count": 0
+      }
+    },
+    {
+      "week": 12,
+      "features": {
+        "login_frequency_weekly": 0.0, "avg_session_duration_min": 0.0,
+        "forum_posts_count": 0, "video_completion_rate": 0.22,
+        "quiz_avg_score": 28.0, "quiz_completion_rate": 0.25,
+        "assignment_submission_rate": 0.15, "days_since_last_activity": 16,
+        "prior_course_completions": 1, "current_week_in_course": 12,
+        "missed_deadlines_count": 6, "help_requests_count": 0
+      }
+    }
+  ]
+}

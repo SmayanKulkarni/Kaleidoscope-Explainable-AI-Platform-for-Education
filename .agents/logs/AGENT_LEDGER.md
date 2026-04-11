@@ -149,3 +149,102 @@
 - **Why it was done:** User requested publishing trained model artifacts to GitHub.
 - **Human-in-the-loop:** Applied direct user instruction to include model files in repository history.
 - **Dependencies/Impacts:** Future clones can retrieve model files via Git LFS pointers for `.pt` and `.pkl`; deployment scripts can reference committed `models/` artifacts.
+
+---
+
+### [2026-04-11 16:45] Cascade — Phase 4: Implicit Feedback Integration + Two-Stage Model
+
+- **Files Created (6 modules):**
+  - ackend/app/tracker/event_store.py — SQLAlchemy model for interaction_events; ecord_batch, get_learner_events, get_all_learner_ids, count API.
+  - ackend/app/tracker/event_schemas.py — Pydantic EventPayload (Literal event_type enum), EventBatchRequest (min_length=1, max_length=500), EventBatchResponse.
+  - ackend/app/model/implicit_aggregator.py — ImplicitAggregator computes 15 implicit + 5 explicit = 20 engagement signals per learner from raw events + feedback; 	o_matrix() for batch encoding.
+  - ackend/app/model/engagement_model.py — Denoising autoencoder (PyTorch): 20→64→32→3→32→64→20; it(), encode(), encode_learner(), save()/load(); cold-start rows (all-zero) → zero latent.
+  - ackend/app/model/retrain_pipeline.py — Full feedback-driven retrain: aggregate signals → fit autoencoder → augment features (12+3=15) → retrain GBM+RF → validation gates (AUC/Brier/SHAP fidelity) → save artifacts → MLflow log. Returns RetrainResult with success, metrics, gates_passed.
+  - ackend/app/model/hot_reload.py — Atomic hot-swap of all AppState components (models + 7 explainers) without uvicorn restart; staging dict pattern; only commits on full success.
+- **Files Modified:**
+  - ackend/app/causal/causal_annotator.py — LATENT_PREFIX = "engagement_latent_"; estimate_single_effect short-circuits for latent features (returns is_causal=False, pointbiserial correlation); nnotate_shap labels them "correlational".
+  - ackend/app/explainers/dice_explainer.py — IMMUTABLE_FEATURES extended with engagement_latent_1/2/3.
+  - ackend/app/prescriptor/action_ranker.py — _non_actionable list includes all 3 latent features; ank() skips them.
+  - ackend/app/main.py — LearnerFeatures adds 3 optional latent fields (default=0.0); AppState adds event_store; lifespan initialises EventStore; new endpoints: POST /events, GET /events/{learner_id}, POST /mlops/retrain, POST /mlops/reload.
+  - data/fixtures/high_risk.json, medium_risk.json, low_risk.json — all include latent features at 0.0.
+- **Tests:** None in this session (tests added in next session).
+- **Verified:** CausalAnnotator correctly labels latent features correlational. DiCE cannot suggest latent changes. ActionRanker skips latent in recommendations.
+
+---
+
+### [2026-04-11 17:00] Cascade — Phase 5: Full AWS Deployment Implementation
+
+#### 5A — Containerization
+- **Files Created:**
+  - Dockerfile — Multi-stage (builder: gcc/pip install; runtime: slim + non-root xaiuser). Models NOT baked in (downloaded from S3 at startup). Health check on /health. CMD: uvicorn 1 worker.
+  - .dockerignore — Excludes .git, .venv, __pycache__, data/raw, models/, mlruns/, Terraform state, .env, dev tool dirs.
+  - docker-compose.yml — db (postgres:16-alpine, health check pg_isready) + pi (depends_on db healthy). Local models/ mounted read-only so no S3 needed in dev. Named volumes: postgres_data, xai_data.
+
+#### 5B — PostgreSQL Migration (all 4 stores)
+- **Files Created:**
+  - ackend/app/db_config.py — get_store_url(name), make_engine(name), make_session_factory(name). PostgreSQL when DATABASE_URL set, per-store SQLite fallback otherwise. Connection pooling (pool_size=5, max_overflow=10, pool_pre_ping=True) for Postgres.
+- **Files Modified:**
+  - ackend/app/auth/database.py — Replaced hardcoded SQLite engine with make_session_factory("auth").
+  - ackend/app/tracker/consistency_store.py — Added create_engine import + clean conditional in ExplanationStore.__init__.
+  - ackend/app/tracker/feedback_store.py — Added create_engine import + clean conditional in FeedbackStore.__init__; constructor now defaults db_url="".
+  - ackend/app/tracker/event_store.py — Same pattern as feedback_store.
+  - ackend/app/main.py — Store initialisations drop hardcoded db_url= args (self-resolve via db_config).
+
+#### 5C — S3 Model Artifact Store
+- **Files Created:**
+  - ackend/app/model/s3_loader.py — download_models(models_dir): downloads 7 top-level files + engagement/ dir from S3 at startup; skips existing files. upload_models(models_dir): uploads after retrain. model_version_on_s3(). All no-ops when AWS_S3_BUCKET unset. Lazy boto3 import.
+- **Files Modified:**
+  - ackend/app/main.py — download_models(MODELS_DIR) called at top of lifespan() before model load. upload_models(MODELS_DIR) called in /mlops/retrain on esult.success.
+
+#### 5D — Terraform Infrastructure as Code
+- **Files Created (infra/):**
+  - main.tf — AWS provider ~5.x, S3 remote state backend (xai-rec-tf-state bucket + DynamoDB lock).
+  - ariables.tf — All vars: region, project_name, ec2 instance type/AMI, SSH key path, allowed SSH CIDR, RDS class/name/user/password/storage, S3 suffix.
+  - pc.tf — Uses default VPC; SG pi (80/443/8000/22 inbound); SG ds (5432 from api SG only).
+  - ecr.tf — ECR repo (mutable tags, scan on push) + lifecycle policy (keep 5 images).
+  - s3.tf — Versioned, encrypted, private S3 bucket; lifecycle: expire noncurrent versions after 30 days.
+  - ec2.tf — t3.micro + 20GB gp3 root; IAM role with ECR pull + S3 r/w policy; instance profile; user_data from template; create_before_destroy lifecycle.
+  - ds.tf — postgres 16.3, db.t3.micro, gp2, encrypted, single-AZ, 7-day backup, Performance Insights (7d free).
+  - outputs.tf — ec2_public_ip, ec2_public_dns, ecr_repo_url, ds_endpoint, database_url (sensitive), s3_bucket_name, pi_url.
+  - userdata.sh.tpl — Amazon Linux 2023: installs Docker + AWS CLI; writes /opt/xai/.env; creates xai-api.service systemd unit (ECR login → pull → docker run).
+  - 	erraform.tfvars.example — Filled template with all variables documented.
+
+#### 5E — GitHub Actions CI/CD
+- **Files Created (.github/workflows/):**
+  - ci.yml — Runs on push/PR. Postgres service container. Installs equirements.txt + ruff + pytest. Lint (ruff) → pytest. Uploads XML results artifact.
+  - deploy.yml — Runs on push to main. Steps: checkout → AWS creds → ECR login → build+push (with layer cache) → SSH: write env file → pull image → **docker run alembic upgrade head** → systemctl restart xai-api → 12×10s health check loop.
+  - etrain.yml — Manual (workflow_dispatch with min_events + orce_reload inputs) + weekly schedule (Sunday 02:00 UTC). Calls /mlops/retrain → parses success field → if true: /mlops/reload → health check. Posts full summary to GitHub step summary.
+  - 	erraform.yml — Runs on infra/** changes. Plan on PR (posts diff as comment via ctions/github-script). Apply on push to main. Captures outputs (hides database_url). Needs DB_PASSWORD secret.
+
+#### 5F — Database Migrations (Alembic)
+- **Files Created:**
+  - lembic.ini — script_location pointing to lembic/; no sqlalchemy.url (resolved in env.py).
+  - lembic/env.py — Imports all 4 ORM Bases (auth, explanations, feedback, events); merges metadata; reads get_store_url("auth") for connection URL; compare_type=True, compare_server_default=True.
+  - lembic/versions/0d652f39389c_initial_schema.py — Autogenerated; creates all 8 tables: users, instructor_profiles, learner_profiles, course_enrollments, explanation_records, eedback_records, interaction_events (+ all indexes). Verified: lembic upgrade head ran clean.
+
+#### 5G — Test Suite (30/30 passing)
+- **Files Created (	ests/):**
+  - conftest.py — Sets DATABASE_URL="", JWT_SECRET_KEY, GROQ_API_KEY="", AWS_S3_BUCKET="" before any app import.
+  - 	est_db_config.py — 3 tests: SQLite fallback URLs, Postgres URL passthrough, engine connectivity.
+  - 	est_event_store.py — 6 tests: empty batch, single, multiple, get by learner, get all IDs, count. Uses in-memory SQLite.
+  - 	est_feedback_store.py — 6 tests: record, invalid rating, get learner records, follow+correction, stats empty, stats with data.
+  - 	est_implicit_aggregator.py — 7 tests: feature name counts, cold-start zeros, vector length, session count, whatif counts, explicit signals from feedback, to_matrix shape.
+  - 	est_engagement_model.py — 8 tests: latent dim, fit+loss, encode shape, cold-start rows zero, encode_learner, cold-start encode_learner, save/load roundtrip, min_samples guard.
+  - 	est_api_smoke.py — 11 tests: health, mlops/health, register+login, events (valid/empty/invalid), get events, feedback (valid/invalid), stats, predict 503-without-model. Requires full requirements.txt.
+- **Files Created (root):**
+  - pytest.ini — 	estpaths=tests, -v --tb=short -q.
+  - Makefile — Targets: venv, install, install-dev, run, test, test-store, test-ml, test-smoke, test-all, lint, db-migrate, db-revision, docker-build, docker-up, docker-down, tf-init, tf-plan, tf-apply, tf-destroy, models-upload, models-download, retrain, reload, clean.
+
+#### 5H — Docs & Config
+- **Files Modified:**
+  - equirements.txt — Added psycopg2-binary>=2.9.9, oto3>=1.34.0, lembic>=1.13.0.
+  - .gitignore — Added Terraform state patterns (infra/.terraform/, *.tfstate, 	erraform.tfvars, etc.).
+  - README.md — Full rewrite: quick start, docker-compose, local dev, AWS deployment steps, Terraform bootstrap, GitHub Secrets table (11 secrets), migration instructions, CI/CD table, architecture diagram, env vars reference.
+- **Files Created:**
+  - .env.example — All 13 env vars documented with generation instructions.
+
+- **Verified:**
+  - lembic upgrade head — clean apply on SQLite.
+  - pytest tests/ --ignore=tests/test_api_smoke.py — **30/30 pass** in 4.14s.
+  - db_config, all 4 stores, s3_loader, implicit_aggregator, engagement_model — all import cleanly.
+
