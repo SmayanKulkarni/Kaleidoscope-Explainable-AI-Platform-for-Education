@@ -12,7 +12,10 @@
 - Update `.agents/context/AGENT_MEMORY.md` whenever the active sprint goals or open problems change.
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
@@ -55,6 +58,9 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60

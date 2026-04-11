@@ -8,6 +8,7 @@
 - ✅ ALWAYS derive explanations from `model.predict_proba()` and pre-computed XAI logic.
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 - 💬 LLM (via Anthropic SDK) is *only for narration* of data payloads.
 - 🎯 Action recommendations MUST come from counterfactual analysis (DiCE), never hard-coded.
 
@@ -22,6 +23,8 @@
 
 **Flow:** Request (`/predict` or `/explain`) → Parallel execution of XAI algorithms → Synchronous CEM & Trust Score → Save to SQLite → Generate LLM Narratives → Response back to React Frontend.
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 - 💬 LLM (via Groq SDK) is *only for narration* of data payloads.
@@ -43,6 +46,9 @@
 
 **Flow:** Request → GBM TreeSHAP + LSTM DeepSHAP + Archipelago + Anchors + DiCE + Prototypes (parallel) → TrustScore → Log to MLflow → Save to SQLite → LLM Narration → Response.
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
@@ -54,6 +60,7 @@
 - **Causal DAG Features:** `assignment_submission_rate`, `quiz_completion_rate`, `days_since_last_activity`, `missed_deadlines_count`, `login_frequency_weekly`
 
 ## 4. Algorithms Reference
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
 | Need | Algorithm | Notes / Use-case |
@@ -73,6 +80,8 @@
 - `POST /counterfactual`: DiCE execution to find actionable pivots. Returns `PrescriptiveAction` lists.
 - `GET /history/{id}`: Timeline of previous explanations + JSD Drift flags.
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 | Need | Algorithm | Unique Signal for LLM Narrator |
@@ -100,6 +109,9 @@
 - `GET /mlops/health` — Model version, drift status, last retrain date.
 - `GET /mlops/drift-report` — Evidently data/prediction drift report.
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
@@ -111,6 +123,12 @@
 - Frontend uses React + Tailwind + Recharts. Backend uses FastAPI + SQLite.
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+- Feature column order is canonical: always use `FEATURE_COLUMNS` from `data_loader.py`.
+- MLflow: every training run logged. Production model served from registry.
+- Rust MC simulator: import via `from mc_simulator import simulate_trajectories`.
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 - Feature column order is canonical: always use `FEATURE_COLUMNS` from `data_loader.py`.
 - MLflow: every training run logged. Production model served from registry.

@@ -21,7 +21,10 @@
 - **Dependencies/Impacts:** Core rule files now depend on this ledger being updated.
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 
@@ -103,6 +106,9 @@
 - **Why it was done:** GitHub enforces strict 100MB thresholds on standard blobs; without LFS rewriting, the historical presence of the raw OULAD tables blocked `push`.
 - **Dependencies/Impacts:** To consume datasets or models locally, future developers/agents **must** possess `git-lfs` (i.e. `git lfs pull` to resolve tracking pointers).
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
+=======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
 =======
 >>>>>>> 741a24ed89c99b98a036f0d03c34830ee3530d60
