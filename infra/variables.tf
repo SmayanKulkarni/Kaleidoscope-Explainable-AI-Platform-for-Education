@@ -19,7 +19,7 @@ variable "environment" {
 # ── EC2 ───────────────────────────────────────────────────────────────────────
 
 variable "ec2_instance_type" {
-  description = "EC2 instance type (t3.micro = free tier, t3.small recommended for retraining)"
+  description = "EC2 instance type. t3.micro (1GB) = free tier eligible. WARNING: the full XAI stack (PyTorch + SHAP + LightGBM) uses ~1.5GB peak — if you hit OOM on startup, upgrade to t3.small."
   type        = string
   default     = "t3.micro"
 }

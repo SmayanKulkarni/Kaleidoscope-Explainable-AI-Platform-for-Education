@@ -1,6 +1,12 @@
 import axios from 'axios';
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+// In production the React app is served from the same origin as the API
+// (FastAPI serves the built static files), so we use a relative base URL.
+// For local dev via `npm run dev`, Vite's proxy rewrites /api → :8000, so
+// we also don't need an absolute URL there.
+// Override with VITE_API_URL only if the frontend is hosted separately.
+const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+
 
 export const client = axios.create({
   baseURL: BASE_URL,

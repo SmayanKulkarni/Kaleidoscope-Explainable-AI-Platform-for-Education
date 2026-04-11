@@ -37,6 +37,8 @@ import numpy as np
 import torch
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.app.causal.causal_annotator import CausalAnnotator
@@ -532,6 +534,28 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Static file serving — React SPA
+# ──────────────────────────────────────────────────────────────────────────────
+# The built frontend lives at backend/static/ (Vite outputs there via vite.config.js).
+# We mount /assets explicitly so hashed JS/CSS/image bundles are served with
+# correct MIME types. All other non-API routes fall through to index.html so
+# React Router can handle client-side navigation.
+
+_STATIC_DIR = PROJECT_ROOT / "backend" / "static"
+_INDEX_HTML  = _STATIC_DIR / "index.html"
+
+if _STATIC_DIR.exists():
+    # Serve hashed asset bundles (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+    log.info("Static assets mounted from %s", _STATIC_DIR / "assets")
+else:
+    log.warning(
+        "Frontend static dir not found at %s — run 'npm run build' in frontend/\n"
+        "  The API endpoints still work; only the React UI is unavailable.",
+        _STATIC_DIR,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1768,3 +1792,26 @@ def recommend_instructor_whatif(req: InstructorRecoWhatIfRequest):
         overrides=req.overrides,
     )
     return {"instructor_id": req.instructor_id, **result.to_dict()}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SPA catch-all — MUST be the very last route registered
+# ──────────────────────────────────────────────────────────────────────────────
+# This serves index.html for any path not matched by an API route above,
+# allowing React Router to handle client-side navigation (e.g. /student,
+# /what-if, /action-plan). Only active when the built frontend is present.
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    """Serve the React SPA for all non-API routes."""
+    if not _INDEX_HTML.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Frontend not built. "
+                "Run 'npm run build' in the frontend/ directory, "
+                "or start the dev server with 'npm run dev'."
+            ),
+        )
+    return FileResponse(str(_INDEX_HTML))
+

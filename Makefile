@@ -11,7 +11,7 @@ VENV_PYTHON  = .venv/Scripts/python
 VENV_PIP     = .venv/Scripts/pip
 
 .PHONY: help install install-dev venv \
-        run run-docker \
+        run run-docker frontend-build frontend-dev \
         test test-store test-ml test-smoke test-all lint \
         db-migrate \
         docker-build docker-up docker-down \
@@ -35,6 +35,8 @@ help:
 	@echo "  Run:"
 	@echo "    make run             Start API locally (SQLite fallback)"
 	@echo "    make run-docker      Start full stack via docker-compose"
+	@echo "    make frontend-build  Build React frontend → backend/static/"
+	@echo "    make frontend-dev    Start Vite dev server (hot-reload)"
 	@echo ""
 	@echo "  Test:"
 	@echo "    make test            Run all tests except API smoke"
@@ -81,6 +83,19 @@ run:
 	$(VENV_PYTHON) -m uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 
 run-docker: docker-up
+
+# Build the React frontend into backend/static/ (production build)
+# This is done automatically inside Docker — only needed for local testing.
+frontend-build:
+	cd frontend && npm ci && npm run build
+	@echo "✓ Frontend built → backend/static/"
+
+# Start the Vite dev server with hot-reload (proxies API calls to :8000)
+# Run this alongside 'make run' for full local dev with hot-reload.
+frontend-dev:
+	cd frontend && npm run dev
+
+
 
 # ── Lint & Test ───────────────────────────────────────────────────────────────
 
