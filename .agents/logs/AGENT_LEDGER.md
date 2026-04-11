@@ -406,3 +406,77 @@ _simulations (default 1000, max 10_000).
 - **Human-in-the-loop:** Directly executed user instruction to start implementation from the proposed MLOps plan.
 - **Dependencies/Impacts:** GitHub Actions now requires `MLOPS_AUTOMATION_TOKEN` secret. Control-plane endpoints reject unauthenticated/non-admin calls unless automation token is configured and provided.
 
+### [2026-04-11 21:08] GitHub Copilot (GPT-5.3-Codex) - Groq Synthetic Recommendation Dataset Generator + Astro Run
+- **Files Modified:** `scripts/generate_synthetic_recommendation_data.py`, `.agents/logs/AGENT_LEDGER.md`
+- **Files Generated:** `data/synthetic/recommendations/student_recommendation_dataset.csv`, `data/synthetic/recommendations/instructor_recommendation_dataset.csv`, `data/synthetic/recommendations/generation_report.json`
+- **What was done:** Implemented a new Groq-driven synthetic data generator that creates separate student and instructor recommendation datasets. Student output blends existing learner features with synthetic implicit feedback signals (`implicit_clicks_14d`, `implicit_video_watch_ratio_14d`, `implicit_forum_events_14d`, `implicit_quiz_attempts_14d`) and course recommendation scoring. Instructor output aggregates cohort investment signals plus student-level affinity to recommend assignments per instructor-student pairing.
+- **Why it was done:** User expanded MVP scope from dropout prediction to dual recommendation engines and requested synthetic data generation via Groq.
+- **Human-in-the-loop:** Used user-requested `conda` environment `astro` to execute generation command.
+- **Dependencies/Impacts:** Generated datasets are now available for recommendation MVP demos; rerun script with custom sizes/top-k as needed.
+
+### [2026-04-11 21:18] GitHub Copilot (GPT-5.3-Codex) - 20k-Scale Regeneration + Main Student Feature Blending
+- **Files Modified:** `scripts/generate_synthetic_recommendation_data.py`, `.agents/logs/AGENT_LEDGER.md`
+- **Files Generated:** `data/synthetic/recommendations/student_recommendation_dataset.csv`, `data/synthetic/recommendations/instructor_recommendation_dataset.csv`, `data/synthetic/recommendations/generation_report.json`
+- **What was done:** Regenerated recommendation datasets at ~20k scale (`--n-students 7000 --top-k 3`) yielding 21,000 student recommendation rows and 20,994 instructor recommendation rows. Updated student recommendation scoring to explicitly blend additional dropout-model student features (`quiz_avg_score`, `assignment_submission_rate`, `missed_deadlines_count`, `prior_course_completions`, `days_since_last_activity`, `studied_credits`, `num_of_prev_attempts`) alongside implicit feedback.
+- **Why it was done:** User requested larger synthetic volume and explicit consideration of student-related data from the main dropout dataset in student recommendation generation.
+- **Human-in-the-loop:** Followed user direction to execute in `conda` env `astro`.
+- **Dependencies/Impacts:** Student recommendation CSV now includes `base_*` student feature columns and `learning_momentum` for downstream model training/debugging.
+
+### [2026-04-11 21:28] GitHub Copilot (GPT-5.3-Codex) - Expanded Explicit/Implicit Signals + 50k Generation
+- **Files Modified:** `scripts/generate_synthetic_recommendation_data.py`, `.agents/logs/AGENT_LEDGER.md`
+- **Files Generated:** `data/synthetic/recommendations/student_recommendation_dataset.csv`, `data/synthetic/recommendations/instructor_recommendation_dataset.csv`, `data/synthetic/recommendations/generation_report.json`
+- **What was done:** Added richer implicit signals (`implicit_avg_dwell_time_min_14d`, `implicit_save_events_14d`, `implicit_search_events_14d`, `implicit_last_recommendation_interaction_days`) and explicit student profile features (`explicit_gender`, `explicit_region`, `explicit_highest_education`, `explicit_imd_band`, `explicit_age_band`, `explicit_disability`, plus numeric explicit scores) into recommendation scoring/output. Regenerated datasets at ~50k scale using `--n-students 17000 --n-instructors 350 --top-k 3`.
+- **Why it was done:** User requested more explicit and implicit features and larger synthetic dataset volume around 50k rows.
+- **Human-in-the-loop:** Executed in user-preferred `conda` env `astro`.
+- **Dependencies/Impacts:** Latest outputs contain 51,000 student recommendation rows and 50,991 instructor recommendation rows with expanded schema for richer recommender prototyping.
+
+### [2026-04-11 22:15] GitHub Copilot (GPT-5.3-Codex) - Recommendation Engine Implementation Start (LambdaMART + Batch Precompute)
+- **Files Modified:** `requirements.txt`, `.agents/logs/AGENT_LEDGER.md`
+- **Files Created:** `backend/app/recommender/__init__.py`, `backend/app/recommender/ranking_metrics.py`, `backend/app/recommender/train_recommenders.py`, `backend/app/recommender/precompute_recommendations.py`
+- **Files Generated:** `models/recommenders/student_ranker.pkl`, `models/recommenders/instructor_ranker.pkl`, `models/recommenders/recommendation_training_summary.json`, `data/recommendations/precomputed/student_topk.csv`, `data/recommendations/precomputed/instructor_topk.csv`, `data/recommendations/precomputed/precompute_report.json`
+- **What was done:** Implemented Phase 1/2 recommender pipeline with LightGBM LambdaMART rankers for student and instructor engines, including grouped split preparation, categorical encoding maps, offline ranking metrics (`ndcg@3`, `recall@3`, `map@3`), MLflow logging/registration, and batch top-k precompute generation.
+- **Why it was done:** User requested to start implementation from the proposed recommendation-engine roadmap.
+- **Human-in-the-loop:** Training and precompute were executed in `conda` env `astro`.
+- **Dependencies/Impacts:** Recommendation model artifacts and precomputed serving tables now exist for API integration; added `lightgbm` dependency to requirements.
+
+---
+
+### [2026-04-11] Cascade — Recommendation Engine Endpoints + Explainability Layer
+
+**Files Created:**
+- `backend/app/recommender/ranker_explainer.py` — `RankerExplainer` service class wrapping LGBMRanker with full XAI suite; result dataclasses `ScoredItem`, `RecommendationExplanation`, `WhatIfResult`.
+
+**Files Modified:**
+- `backend/app/main.py` — Added `Any, Dict` to typing imports; imported `RankerExplainer`; added `student_ranker_explainer` + `instructor_ranker_explainer` to `AppState`; added ranker loading loop in lifespan (reads `models/recommenders/student_ranker.pkl` + `instructor_ranker.pkl`); appended 7 new recommendation endpoints.
+
+**New Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/recommend/health` | Ranker load status + feature count |
+| POST | `/recommend/student` | Score + rank candidate items for a student, top-K with SHAP |
+| POST | `/recommend/student/explain` | Full XAI: SHAP, anchor rule, interactions, causal, stability |
+| POST | `/recommend/student/whatif` | Score delta under feature overrides |
+| POST | `/recommend/instructor` | Score + rank interventions for instructor |
+| POST | `/recommend/instructor/explain` | Full XAI for instructor assignments |
+| POST | `/recommend/instructor/whatif` | Score delta for instructor assignments |
+
+**Explainability Layer — What applies vs dropout engine:**
+| Interface | Dropout | Recommender | Reason |
+|-----------|---------|-------------|--------|
+| TreeSHAP | ✅ | ✅ | LGBMRanker `pred_contrib=True` native |
+| WhatIf | ✅ | ✅ | Re-score with overrides |
+| Anchor rule | ✅ | ✅ | IF-THEN from top SHAP + actual values |
+| Feature interactions | ✅ | ✅ | `\|shap_i × shap_j\|` pairs |
+| Causal annotations | ✅ | ✅ | Reuses `CausalAnnotator` when features overlap |
+| SHAP stability | ✅ | ✅ | Noise-perturbation rank-variance (0–1) |
+| Plain-language | ✅ | ✅ | Auto-generated from top SHAP features |
+| DiCE counterfactual | ✅ | ❌ | DiCE requires binary classifier |
+| MAPIE uncertainty | ✅ | ❌ | Requires `predict_proba`; not on ranker |
+| LSTM temporal | ✅ | ❌ | Recommendation features are not sequential |
+
+**Key design decisions:**
+- `RankerExplainer` is a clean standalone service — accepts the artifact dict schema from `train_recommenders.py` directly (model + feature_columns + metadata.encoder_maps).
+- SHAP stability uses Gaussian perturbation + rank-variance to produce a `[0,1]` confidence score, mirroring `TrustScorer` philosophy.
+- Graceful degradation: all endpoints return HTTP 503 if the ranker wasn't loaded, never panic-crash.
+- Causal annotator is passed in from the dropout engine but is optional — unknown label used as fallback when features don't overlap.
+

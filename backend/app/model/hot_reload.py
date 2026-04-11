@@ -158,11 +158,21 @@ def hot_reload(
             staging["model_version"] = "gbm-v1"
 
         # ── SHAP ─────────────────────────────────────────────────
-        lstm_model = state.lstm_model   # LSTM doesn't change on retrain
+        lstm_model    = state.lstm_model   # LSTM doesn't change on retrain
+        _X_background = None
+        _snapshots_path = data_dir / "temporal" / "snapshots.pkl"
+        if lstm_model is not None and _snapshots_path.exists():
+            try:
+                from backend.app.model.lstm_trainer import build_sequences as _build_seqs
+                _bg_seqs, _, _ = _build_seqs(_snapshots_path)
+                _X_background  = _bg_seqs[:200]
+            except Exception as _e:
+                log.warning("hot_reload: LSTM background sequences unavailable: %s", _e)
         staging["shap_explainer"] = SHAPExplainer(
             gbm_model     = gbm_model,
             feature_names = feature_names,
             lstm_model    = lstm_model,
+            X_background  = _X_background,
         )
         reloaded.append("shap_explainer")
 

@@ -1,0 +1,16 @@
+{
+  "student": {
+    "ndcg_at_3": 0.809,
+    "recall_at_3": 0.9894,
+    "map_at_3": 0.9991
+  },
+  "instructor": {
+    "ndcg_at_3": 0.9926,
+    "recall_at_3": 0.1643,
+    "map_at_3": 0.9815
+  },
+  "artifacts": {
+    "student_ranker": "models/recommenders/student_ranker.pkl",
+    "instructor_ranker": "models/recommenders/instructor_ranker.pkl"
+  }
+}

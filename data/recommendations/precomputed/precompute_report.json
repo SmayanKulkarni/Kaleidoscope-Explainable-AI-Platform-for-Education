@@ -1,0 +1,9 @@
+{
+  "top_k": 5,
+  "student_rows": 49842,
+  "instructor_rows": 1750,
+  "paths": {
+    "student": "data/recommendations/precomputed/student_topk.csv",
+    "instructor": "data/recommendations/precomputed/instructor_topk.csv"
+  }
+}
