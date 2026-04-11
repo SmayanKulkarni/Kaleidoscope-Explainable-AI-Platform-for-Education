@@ -480,3 +480,31 @@ _simulations (default 1000, max 10_000).
 - Graceful degradation: all endpoints return HTTP 503 if the ranker wasn't loaded, never panic-crash.
 - Causal annotator is passed in from the dropout engine but is optional — unknown label used as fallback when features don't overlap.
 
+
+---
+
+## Entry — Monte Carlo /simulate End-to-End Fix
+
+**Date:** 2026-04-11
+**Sprint task:** Get `/simulate` endpoint returning real outcome distributions
+
+### Actions taken
+
+1. **Diagnosed stale server** — running server had old stub (`"Rust MC — Phase 5 pending"`); killed and restarted.
+2. **Fixed `shap_explainer.py` — CUDA device mismatch** — `torch.tensor(bg).to(device)` where `device = next(lstm_model.parameters()).device`.
+3. **Fixed `shap_explainer.py` — SHAP 1D output crash** — wrapped LSTM in `_OutputWrapper(nn.Module)` that calls `.unsqueeze(-1)` when `out.dim() == 1`, giving SHAP the `(N,1)` it expects.
+4. **Fixed `main.py` — fragile explainer startup** — wrapped `SHAPExplainer`, `ArchipelagoExplainer`, `DiCEExplainer`, `AnchorsExplainer`, `PrototypeExplainer`, `UncertaintyEstimator`, `CausalAnnotator`, `ActionRanker` inits in individual `try/except` so library compat issues no longer crash the whole server.
+5. **Root cause of /simulate 500** — `MonteCarloSimulator.simulate()` built `X_sim` from `FEATURE_COLUMNS` (12 cols) but GBM was trained on 18 features (12 + 3 engagement latents + 3 again — training artifact).
+6. **Fixed `temporal_builder.py`** — added `model_feature_names: list = None` param to `simulate()`; builds `X_sim` using `t.get(f, 0.0)` for each name → safely handles extra/duplicated feature names.
+7. **Fixed `main.py` endpoint** — passed `model_feature_names=state.feature_names` to `simulate()`.
+
+### Verified
+
+```python
+POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_rate=0.046
+```
+
+### Files changed
+- `backend/app/explainers/shap_explainer.py`
+- `backend/app/model/temporal_builder.py`
+- `backend/app/main.py`
