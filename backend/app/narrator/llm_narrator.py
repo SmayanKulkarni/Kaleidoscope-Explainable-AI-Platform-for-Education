@@ -143,21 +143,26 @@ Narrate this recommendation in plain, encouraging language for the student. Unde
 """
 
 RECO_INSTRUCTOR_USER_TEMPLATE = """
-Pre-computed recommendation results for Learner {learner_id}:
+Instructor profile: {learner_id} | Archetype: {instructor_archetype} | Style: {instructor_teaching_style} | Dept: {instructor_department}
 
-Item recommended: {item_id} | Relevance score: {score:.4f}
+Student assigned: {item_id} | Priority score: {score:.4f}
+Student risk: {student_dropout_risk_score} ({student_risk_trajectory})
+Cohort avg dropout rate: {cohort_avg_dropout_rate}
+
 Trust score: {trust_score} | SHAP stability: {stability:.2f}
 Anchor precision: {anchor_precision:.0%}
 
-SHAP Top-3 (signed attribution):
+SHAP Top-3 attribution:
 {shap_top3}
 
 Decision rule: {anchor_rule}
 
-Feature interactions: {interaction_note}
-Diversity score: {diversity_score}
+Recommended intervention: {intervention_type} ({intervention_urgency} urgency)
+Content type: {recommended_content_type} | Estimated effort: {estimated_effort_hours}h
 
-Summarise for the instructor. Under 150 words. Structure: recommendation summary → key drivers → follow-up.
+Feature interactions: {interaction_note}
+
+Summarise for the instructor. Under 150 words. Structure: student status → recommended intervention → rationale → follow-up action.
 """
 
 
@@ -258,22 +263,43 @@ def _build_reco_instructor_payload(explain_resp: dict, learner_id: str) -> str:
     anchor_prec = float(explain_resp.get("anchor_precision", 0.0))
     interactions = explain_resp.get("feature_interactions") or []
     int_note    = (
-        f"{interactions[0]['features'][0]} ↔ {interactions[0]['features'][1]} "
+        f"{interactions[0]['features'][0]} \u2194 {interactions[0]['features'][1]} "
         f"({interactions[0].get('direction', 'unknown')})"
         if interactions else "No significant interactions"
     )
-    diversity   = explain_resp.get("diversity_score", "N/A")
+    # Instructor & student context fields (new rich instructor data)
+    inst_arch   = explain_resp.get("instructor_archetype", "unknown")
+    inst_style  = explain_resp.get("instructor_teaching_style", "unknown")
+    inst_dept   = explain_resp.get("instructor_department", "unknown")
+    stu_risk    = explain_resp.get("student_dropout_risk_score", "N/A")
+    stu_traj    = explain_resp.get("student_risk_trajectory", "unknown")
+    cohort_drop = explain_resp.get("cohort_avg_dropout_rate", "N/A")
+    if isinstance(cohort_drop, float):
+        cohort_drop = f"{cohort_drop:.1%}"
+    int_type    = explain_resp.get("intervention_type", "general")
+    int_urgency = explain_resp.get("intervention_urgency", "unknown")
+    cont_type   = explain_resp.get("recommended_content_type", "unknown")
+    effort      = explain_resp.get("estimated_effort_hours", "N/A")
     return RECO_INSTRUCTOR_USER_TEMPLATE.format(
-        learner_id      = learner_id,
-        item_id         = item_id,
-        score           = score,
-        trust_score     = trust_val,
-        stability       = stability,
-        anchor_precision = anchor_prec,
-        shap_top3       = _format_top3(shap),
-        anchor_rule     = anchor,
-        interaction_note = int_note,
-        diversity_score  = diversity,
+        learner_id              = learner_id,
+        item_id                 = item_id,
+        score                   = score,
+        trust_score             = trust_val,
+        stability               = stability,
+        anchor_precision        = anchor_prec,
+        shap_top3               = _format_top3(shap),
+        anchor_rule             = anchor,
+        interaction_note        = int_note,
+        instructor_archetype    = inst_arch,
+        instructor_teaching_style = inst_style,
+        instructor_department   = inst_dept,
+        student_dropout_risk_score = stu_risk,
+        student_risk_trajectory = stu_traj,
+        cohort_avg_dropout_rate = cohort_drop,
+        intervention_type       = int_type,
+        intervention_urgency    = int_urgency,
+        recommended_content_type = cont_type,
+        estimated_effort_hours  = effort,
     )
 
 

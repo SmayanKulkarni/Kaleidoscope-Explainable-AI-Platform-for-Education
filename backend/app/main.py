@@ -319,16 +319,25 @@ async def lifespan(app: FastAPI):
         log.warning("transitions.pkl not found — /simulate will return empty distributions")
 
     # ── Recommendation Rankers ──
-    # Feature 5: load student reference pool for KNN prototypes
+    # Feature 5: load student & instructor reference pools for KNN prototypes
     import pandas as _pd
     _topk_path    = DATA_DIR / "recommendations" / "precomputed" / "student_topk.csv"
     _reco_ref_pool = None
     if _topk_path.exists():
         try:
             _reco_ref_pool = _pd.read_csv(_topk_path)
-            log.info("Reco reference pool loaded  rows=%d", len(_reco_ref_pool))
+            log.info("Student reco reference pool loaded  rows=%d", len(_reco_ref_pool))
         except Exception as _e:
             log.warning("Failed to load student_topk.csv: %s", _e)
+
+    _instr_topk_path = DATA_DIR / "recommendations" / "precomputed" / "instructor_topk.csv"
+    _instr_ref_pool  = None
+    if _instr_topk_path.exists():
+        try:
+            _instr_ref_pool = _pd.read_csv(_instr_topk_path)
+            log.info("Instructor reco reference pool loaded  rows=%d", len(_instr_ref_pool))
+        except Exception as _e:
+            log.warning("Failed to load instructor_topk.csv: %s", _e)
 
     _reco_models_dir = MODELS_DIR / "recommenders"
     for _pkl_name, _attr in [
@@ -341,21 +350,25 @@ async def lifespan(app: FastAPI):
                 _art = pickle.load(_f)
             _feat_cols = _art["feature_columns"]
 
-            # Feature 3 & 5: build X_train_sample from reference pool (student only)
+            # Feature 3 & 5: build X_train_sample from reference pool
             _X_sample, _pool = None, None
-            if _attr == "student_ranker_explainer" and _reco_ref_pool is not None:
-                _pool = _reco_ref_pool
-                _avail = [c for c in _feat_cols if c in _reco_ref_pool.columns]
+            _ref_source = (
+                _reco_ref_pool  if _attr == "student_ranker_explainer"    else
+                _instr_ref_pool if _attr == "instructor_ranker_explainer" else None
+            )
+            if _ref_source is not None:
+                _pool  = _ref_source
+                _avail = [c for c in _feat_cols if c in _ref_source.columns]
                 if len(_avail) >= 3:
                     try:
-                        _ps = _reco_ref_pool.dropna(subset=_avail).head(500)
+                        _ps = _ref_source.dropna(subset=_avail).head(500)
                         if len(_ps) > 10:
                             _Xf = _pd.DataFrame(0.0, index=range(len(_ps)), columns=_feat_cols)
                             for _c in _avail:
                                 _Xf[_c] = _ps[_c].values
                             _X_sample = _Xf.values.astype(float)
                     except Exception as _xe:
-                        log.warning("X_train_sample build failed: %s", _xe)
+                        log.warning("%s X_train_sample build failed: %s", _attr, _xe)
 
             setattr(state, _attr, RankerExplainer(
                 model           = _art["model"],
@@ -1535,11 +1548,46 @@ def recommend_instructor(req: InstructorRecoRequest):
         top_k=req.top_k,
         include_shap=req.include_shap,
     )
-    return {
-        "instructor_id":   req.instructor_id,
-        "top_k":           req.top_k,
-        "recommendations": [s.to_dict() for s in scored],
+
+    # Diversity by intervention_type
+    _i_id_to_feats = {
+        str(it.item_id) if it.item_id else str(i): it.features
+        for i, it in enumerate(req.items)
     }
+    _int_types = [
+        str(_i_id_to_feats.get(s.item_id, {}).get(
+            "intervention_type",
+            _i_id_to_feats.get(s.item_id, {}).get("recommended_content_type", ""),
+        ))
+        for s in scored
+    ]
+    _int_types   = [t for t in _int_types if t]
+    _i_diversity = round(len(set(_int_types)) / len(scored), 4) if scored else 0.0
+    _i_div_warn  = (
+        "Low diversity: all interventions are the same type. Consider diversifying approach."
+        if _i_diversity < 0.5 and scored
+        else None
+    )
+
+    i_resp = {
+        "instructor_id":     req.instructor_id,
+        "top_k":             req.top_k,
+        "recommendations":   [s.to_dict() for s in scored],
+        "diversity_score":   _i_diversity,
+        "diversity_warning": _i_div_warn,
+    }
+
+    # Fairness audit across instructor_department and instructor_archetype
+    if state.fairness_auditor is not None and scored:
+        _i_feats  = [_i_id_to_feats.get(s.item_id, {}) for s in scored]
+        _i_scores = [s.score for s in scored]
+        _i_audit  = FairnessAuditor(
+            protected_features=["instructor_department", "instructor_archetype",
+                                 "instructor_teaching_style"]
+        ).audit(_i_feats, _i_scores)
+        i_resp["fairness_audit"] = _i_audit.to_dict()
+
+    return i_resp
 
 
 @app.post("/recommend/instructor/explain")
@@ -1554,9 +1602,23 @@ def recommend_instructor_explain(req: InstructorRecoExplainRequest):
         item_id=req.item_id,
     )
 
+    # Intervention metadata passthrough
+    _INSTR_META_KEYS = (
+        "intervention_type", "intervention_urgency",
+        "recommended_content_type", "estimated_effort_hours",
+        "student_dropout_risk_score", "student_risk_trajectory",
+        "instructor_archetype", "instructor_teaching_style",
+        "instructor_department", "cohort_avg_dropout_rate",
+    )
+    _instr_meta = {k: req.features[k] for k in _INSTR_META_KEYS if k in req.features}
+
     # Feature 1: LLM narration with recommendation context
     if state.llm_narrator is not None:
-        _reco_dict = {"instructor_id": req.instructor_id, **explanation.to_dict()}
+        _reco_dict = {
+            "instructor_id": req.instructor_id,
+            **explanation.to_dict(),
+            **_instr_meta,
+        }
         _narration = state.llm_narrator.narrate(
             explain_resp = _reco_dict,
             learner_id   = req.instructor_id,
@@ -1565,7 +1627,7 @@ def recommend_instructor_explain(req: InstructorRecoExplainRequest):
         )
         explanation.narratives = _narration.to_dict()
 
-    return {"instructor_id": req.instructor_id, **explanation.to_dict()}
+    return {"instructor_id": req.instructor_id, **explanation.to_dict(), **_instr_meta}
 
 
 @app.post("/recommend/instructor/whatif")

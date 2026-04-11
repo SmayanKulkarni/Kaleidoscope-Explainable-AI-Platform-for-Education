@@ -534,3 +534,23 @@ POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_
 - **Why it was done:** Brings Recommendation Engine to XAI parity with Dropout Risk Engine per `REC_IMPS.md` sprint plan.
 
 - **Dependencies/Impacts:** All new `RecommendationExplanation` fields have defaults (None/0.0/[]); all state attributes guarded with `if state.X is not None`; existing dropout endpoints untouched.
+
+---
+
+### Entry 2025 — Instructor Data Upgrade (9 → 34 features) + Frontend Integration Plan
+
+- **Action:** Upgraded instructor recommendation engine to use richer dataset and created agent-ready frontend integration plan.
+
+- **Files modified:**
+  - `backend/app/recommender/train_recommenders.py` — Added `PRECOMPUTED_DIR`; updated instructor `drop_cols` to exclude leaky columns (`predicted_improvement_score`, `priority_reason_tag`); added `_build_topk_csv()` helper; now auto-generates both `student_topk.csv` and `instructor_topk.csv` after training.
+  - `models/recommenders/instructor_ranker.pkl` — Retrained. 9 features → 34 features. NDCG@3=0.993, MAP@3=0.982.
+  - `data/recommendations/precomputed/instructor_topk.csv` — Regenerated with 1750 rows covering 350 instructors × 5 top-K items using new 34-feature model.
+  - `data/recommendations/precomputed/student_topk.csv` — Regenerated (49842 rows) to ensure reference pool consistency.
+  - `backend/app/main.py` — Load `instructor_topk.csv` as reference pool in lifespan; refactored `_ref_source` selection to handle both student and instructor rankers; `/recommend/instructor` now returns `diversity_score` (by `intervention_type`/`recommended_content_type`), `diversity_warning`, and `fairness_audit` (across `instructor_department`, `instructor_archetype`, `instructor_teaching_style`); `/recommend/instructor/explain` now passes 10 intervention metadata fields through response (`intervention_type`, `intervention_urgency`, `recommended_content_type`, `estimated_effort_hours`, `student_dropout_risk_score`, `student_risk_trajectory`, `instructor_archetype`, `instructor_teaching_style`, `instructor_department`, `cohort_avg_dropout_rate`).
+  - `backend/app/narrator/llm_narrator.py` — `RECO_INSTRUCTOR_USER_TEMPLATE` expanded with instructor profile, student risk trajectory, cohort dropout rate, intervention type/urgency/content, effort hours; `_build_reco_instructor_payload()` extracts all 10 new fields with graceful defaults.
+  - `docs/FRONTEND_BACKEND_INTEGRATION.md` — Updated Recommendation Engine table with new response shapes; added full `InstructorRecoItem` 34-field TypeScript schema (§1b); added `InstructorExplainResponse` TypeScript interface; added `GET /causal/graph` to endpoint table.
+  - `docs/XAI_INTEGRATION_PLAN.md` — Created. 11-section agent-ready plan: discovery checklist, API layer updates (typed interfaces), updated component specs (TrustScoreCard, AnchorRuleCard, RecommendationList), 7 new component specs (NarrativeCard, PrototypesCard, ExplanationDriftBanner, FairnessAuditPanel, InterventionMetaCard, CausalDagGraph, InstructorStudentCard), page integration steps, request body builder utility, new hooks, 8-phase ordered implementation checklist, mock fixture data for all new response fields, testing checklist.
+
+- **Why it was done:** Instructor dataset was upgraded from 9 to 40 columns. Old model could not leverage instructor teaching style, department, experience, student academic metrics, cohort stats, or intervention metadata. Retrained model now captures these signals. Plan was created to guide a separate frontend IDE agent to integrate all backend updates without requiring manual discovery.
+
+- **Dependencies/Impacts:** `instructor_ranker.pkl` is a breaking change for any caller using the old 9-feature schema — all callers must now send 34 features. Backend is backward-compatible: missing features default to 0 via `_cast_and_encode`. Frontend must update its instructor recommendation request builder (see `docs/XAI_INTEGRATION_PLAN.md § Part 6`).
