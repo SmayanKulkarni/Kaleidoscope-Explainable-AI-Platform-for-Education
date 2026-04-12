@@ -767,6 +767,40 @@ app.include_router(auth_router)
 _STATIC_DIR = PROJECT_ROOT / "backend" / "static"
 _INDEX_HTML  = _STATIC_DIR / "index.html"
 
+
+def _extract_json(raw: str) -> dict:
+    """
+    Robustly extract a JSON object from an LLM response that may contain
+    markdown fences, preamble text, or trailing commentary.
+    """
+    import json as _j
+    # Strip markdown code fences
+    if "```" in raw:
+        parts = raw.split("```")
+        for part in parts:
+            stripped = part.strip()
+            if stripped.lower().startswith("json"):
+                stripped = stripped[4:].strip()
+            if stripped.startswith("{"):
+                try:
+                    return _j.loads(stripped)
+                except Exception:
+                    pass
+    # Try whole string first
+    try:
+        return _j.loads(raw)
+    except Exception:
+        pass
+    # Find the first { ... } block
+    start = raw.find("{")
+    end   = raw.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return _j.loads(raw[start:end + 1])
+        except Exception:
+            pass
+    raise ValueError(f"No valid JSON found in LLM response: {raw[:200]}")
+
 if _STATIC_DIR.exists():
     # Serve hashed asset bundles (JS, CSS, images)
     app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
@@ -2032,15 +2066,8 @@ def causal_explain():
             temperature=0.3,
             max_tokens=800,
         )
-        raw = (_resp.choices[0].message.content or "{}").strip()
-        # Strip markdown fence if present
-        if raw.startswith("```"):
-            raw = "\n".join(raw.splitlines()[1:])
-            if raw.endswith("```"):
-                raw = raw[:-3].strip()
-            if raw.lower().startswith("json"):
-                raw = raw[4:].strip()
-        parsed = _json.loads(raw)
+        raw = (_resp.choices[0].message.content or "").strip()
+        parsed = _extract_json(raw)
         parsed["source"] = "groq"
         return parsed
     except Exception as _e:
@@ -2207,15 +2234,8 @@ def fairness_explain(req: FairnessExplainRequest):
             temperature = 0.3,
             max_tokens  = 500,
         )
-        raw = (_resp.choices[0].message.content or "{}").strip()
-        # Strip markdown fence if present
-        if raw.startswith("```"):
-            raw = "\n".join(raw.splitlines()[1:])
-            if raw.endswith("```"):
-                raw = raw[:-3].strip()
-            if raw.lower().startswith("json"):
-                raw = raw[4:].strip()
-        parsed = _json.loads(raw)
+        raw = (_resp.choices[0].message.content or "").strip()
+        parsed = _extract_json(raw)
         parsed["source"] = "groq"
         return parsed
     except Exception as _e:
@@ -2641,13 +2661,31 @@ def instructor_recommend_for_student(learner_id: str, current_user=Depends(get_c
             "student_vs_cohort_quiz_delta": snap.quiz_avg_score - 65.0,
             "student_peer_collab_readiness": snap.forum_posts_count / 10.0,
         }
-        merged = {**instr_feats, **student_feats,
-                  "cohort_signal_score": 0.5, "cohort_avg_quiz_score": 65.0,
-                  "cohort_avg_dropout_rate": 0.3, "cohort_size": 30,
-                  "cohort_engagement_percentile": 0.5}
-
+        risk = float(snap.dropout_risk_score or 0.5)
+        cohort_base = {
+            **instr_feats, **student_feats,
+            "cohort_signal_score":        max(0.0, 1.0 - risk),
+            "cohort_avg_quiz_score":      65.0,
+            "cohort_avg_dropout_rate":    0.3,
+            "cohort_size":                30,
+            "cohort_engagement_percentile": max(0.1, 1.0 - risk),
+            "recommended_module":          snap.current_module or "CCC",
+            "recommended_presentation":    snap.current_presentation or "2014J",
+        }
+        # Candidate intervention pool — each scored independently by the ranker
+        _CANDIDATE_INTERVENTIONS = [
+            {"item_id": "quiz_practice",      "intervention_type": "formative_assessment", "recommended_content_type": "quiz",             "estimated_effort_hours": 0.5,  "intervention_urgency": "high",   "student_affinity_score": 0.75},
+            {"item_id": "office_hours",       "intervention_type": "direct_mentoring",     "recommended_content_type": "live_session",     "estimated_effort_hours": 0.75, "intervention_urgency": "high",   "student_affinity_score": 0.80},
+            {"item_id": "early_alert_email",  "intervention_type": "early_alert",          "recommended_content_type": "communication",    "estimated_effort_hours": 0.25, "intervention_urgency": "high",   "student_affinity_score": 0.85},
+            {"item_id": "assignment_support", "intervention_type": "academic_support",     "recommended_content_type": "assignment",       "estimated_effort_hours": 2.0,  "intervention_urgency": "high",   "student_affinity_score": 0.70},
+            {"item_id": "forum_engagement",   "intervention_type": "peer_discussion",      "recommended_content_type": "forum_thread",     "estimated_effort_hours": 1.0,  "intervention_urgency": "medium", "student_affinity_score": 0.60},
+            {"item_id": "video_review",       "intervention_type": "content_review",       "recommended_content_type": "video_lecture",    "estimated_effort_hours": 1.5,  "intervention_urgency": "low",    "student_affinity_score": 0.55},
+            {"item_id": "study_guide",        "intervention_type": "content_review",       "recommended_content_type": "reading_material", "estimated_effort_hours": 1.0,  "intervention_urgency": "low",    "student_affinity_score": 0.50},
+            {"item_id": "group_project",      "intervention_type": "collaborative_work",   "recommended_content_type": "group_task",       "estimated_effort_hours": 3.0,  "intervention_urgency": "low",    "student_affinity_score": 0.55},
+        ]
+        candidate_items = [{**cohort_base, **intv} for intv in _CANDIDATE_INTERVENTIONS]
         scored = state.instructor_ranker_explainer.score_items(
-            items=[merged], top_k=5, include_shap=True
+            items=candidate_items, top_k=5, include_shap=True
         )
         return {
             "learner_id": learner_id,
@@ -2707,16 +2745,24 @@ def instructor_whatif_for_student(
         import numpy as _np
         _X = _np.array([[merged_fd.get(n, 0.0) for n in state.feature_names]])
         new_risk = round(float(state.gbm_model.predict_proba(_X)[0][1]), 4)
-        delta = round(new_risk - (snap.dropout_risk_score or 0.0), 4)
-        shap_result = state.shap_explainer.explain(merged_fd)
+        base_risk = float(snap.dropout_risk_score or 0.0)
+        delta = round(new_risk - base_risk, 4)
+        top_features, shap_vals = [], {}
+        if state.shap_explainer is not None:
+            try:
+                shap_result = state.shap_explainer.explain(merged_fd)
+                top_features = list(shap_result.top_features[:5])
+                shap_vals = {k: round(v, 5) for k, v in shap_result.shap_values.items()}
+            except Exception as _se:
+                log.warning("whatif shap explain failed: %s", _se)
         return {
             "learner_id":    learner_id,
-            "base_risk":     snap.dropout_risk_score,
+            "base_risk":     base_risk,
             "new_risk":      new_risk,
             "risk_delta":    delta,
             "risk_label":    _risk_label(new_risk),
-            "top_features":  list(shap_result.top_features[:5]),
-            "shap_values":   {k: round(v, 5) for k, v in shap_result.shap_values.items()},
+            "top_features":  top_features,
+            "shap_values":   shap_vals,
         }
     finally:
         db.close()
@@ -2788,12 +2834,7 @@ def student_study_tips(req: dict, current_user=Depends(get_current_user)):
             temperature=0.4, max_tokens=512,
         )
         raw = (_resp.choices[0].message.content or "").strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        parsed = _json.loads(raw)
+        parsed = _extract_json(raw)
         return {**parsed, "source": "llm"}
     except Exception as _e:
         log.warning("study-tips LLM call failed: %s", _e)
@@ -2808,19 +2849,30 @@ def student_study_tips(req: dict, current_user=Depends(get_current_user)):
 # Compare narration endpoint — LLM explains GBM vs LSTM bipartite graph
 # ──────────────────────────────────────────────────────────────────────────────
 
-_COMPARE_NARRATE_PROMPT = """You are an XAI system explaining a model comparison to a {audience}.
-GBM (gradient boosting) risk score: {gbm_score} ({gbm_label})
-LSTM (sequential/temporal) risk score: {lstm_score} ({lstm_label})
-Disagreement flag: {disagreement}
-GBM top features: {gbm_top}
+_COMPARE_NARRATE_PROMPT = """You are an XAI system narrating a bipartite model-comparison graph for a {audience}.
 
-Explain in plain language:
-1. What each model captures (GBM = tabular patterns; LSTM = temporal trends over weeks)
-2. Why they agree or disagree on this student
-3. What the disagreement (if any) means practically for the {audience}
-4. One concrete recommendation based on this comparison
+GRAPH STRUCTURE:
+- Left node: GBM model \u2014 dropout risk {gbm_score} ({gbm_label})
+- Right node: LSTM model \u2014 dropout risk {lstm_score} ({lstm_label})
+- Connecting edges carry feature-level SHAP weights from each model
+- Disagreement flag: {disagreement} (True = models differ by >15% risk)
 
-Return ONLY valid JSON: {{"summary": "...", "gbm_insight": "...", "lstm_insight": "...", "disagreement_meaning": "...", "recommendation": "..."}}
+GBM top-weighted features (tabular engagement/performance): {gbm_top}
+LSTM top-weighted features (temporal weekly trend): {lstm_top}
+Shared features agreed upon by both models: {shared_features}
+
+STRICT RULES:
+- GBM captures static snapshot patterns (quiz scores, login frequency, assignment rates)
+- LSTM captures sequential trends (week-over-week engagement trajectory and momentum)
+- Only describe what is in the data above \u2014 do not invent numbers
+- Tailor language: if audience=student, be supportive and action-oriented; if instructor, be analytical
+
+Return ONLY valid JSON (no preamble, no markdown):
+{{"summary": "2-3 sentence overview of what both models say about this student",
+  "gbm_insight": "What the GBM graph node reveals about tabular risk factors and which features dominate",
+  "lstm_insight": "What the LSTM graph node reveals about the student temporal engagement trajectory",
+  "disagreement_meaning": "What the edge disagreement (or agreement) means and which model to trust more and why",
+  "recommendation": "One specific actionable step for the {audience} based on this bipartite comparison"}}
 """
 
 
@@ -2835,14 +2887,30 @@ def compare_narrate(req: dict):
     gbm_top       = req.get("gbm_top3_features", [])
     audience      = req.get("audience", "student")
 
+    lstm_top      = req.get("lstm_top3_features", [])
+    shared        = [f for f in gbm_top if f in lstm_top]
+    top_feat_str  = gbm_top[0].replace("_", " ") if gbm_top else "engagement patterns"
+
     fallback = {
-        "summary": f"GBM predicts {gbm_label} risk ({gbm_score:.0%})" + (
-            f", LSTM predicts {lstm_label} risk ({lstm_score:.0%})." if lstm_score else "."
+        "summary": (
+            f"GBM predicts {gbm_label} risk ({gbm_score:.0%})"
+            + (f", while LSTM predicts {lstm_label} risk ({lstm_score:.0%})." if lstm_score else ".")
+            + (" The models disagree — review both perspectives." if disagreement else " Both models agree.")
         ),
-        "gbm_insight": "The gradient boosting model uses tabular engagement and performance features.",
-        "lstm_insight": "The LSTM model tracks weekly engagement trends over time." if lstm_score else "LSTM not available.",
-        "disagreement_meaning": "The models disagree — consider both perspectives before acting." if disagreement else "Both models agree on the risk level.",
-        "recommendation": "Focus on the top risk features identified by GBM.",
+        "gbm_insight": (
+            f"The gradient boosting model assigns {gbm_label} risk based on tabular features. "
+            + (f"Key drivers: {', '.join(f.replace('_',' ') for f in gbm_top[:3])}." if gbm_top else "No feature breakdown available.")
+        ),
+        "lstm_insight": (
+            f"The LSTM model tracks week-over-week engagement trends and assigns {lstm_label} risk."
+            if lstm_score else "LSTM model not available for this student."
+        ),
+        "disagreement_meaning": (
+            f"The models diverge by {abs(gbm_score - (lstm_score or gbm_score)):.0%} — GBM sees {gbm_label} risk from current snapshots while LSTM sees {lstm_label} risk from recent trajectory. Prioritise the LSTM signal for early-warning decisions."
+            if disagreement else
+            f"Both models agree on {gbm_label} risk, reinforcing confidence in the prediction."
+        ),
+        "recommendation": f"Focus on improving {top_feat_str} to reduce risk, as flagged by both models.",
         "source": "rule_based",
     }
 
@@ -2852,7 +2920,10 @@ def compare_narrate(req: dict):
     prompt = _COMPARE_NARRATE_PROMPT.format(
         audience=audience, gbm_score=f"{gbm_score:.0%}", gbm_label=gbm_label,
         lstm_score=f"{lstm_score:.0%}", lstm_label=lstm_label,
-        disagreement=disagreement, gbm_top=", ".join(gbm_top),
+        disagreement=disagreement,
+        gbm_top=", ".join(f.replace('_', ' ') for f in gbm_top) or "not available",
+        lstm_top=", ".join(f.replace('_', ' ') for f in lstm_top) or "not available",
+        shared_features=", ".join(f.replace('_', ' ') for f in shared) or "none",
     )
     try:
         import json as _json
@@ -2864,11 +2935,7 @@ def compare_narrate(req: dict):
             temperature=0.4, max_tokens=600,
         )
         raw = (_resp.choices[0].message.content or "").strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        parsed = _json.loads(raw)
+        parsed = _extract_json(raw)
         return {**parsed, "source": "llm"}
     except Exception as _e:
         log.warning("compare/narrate LLM call failed: %s", _e)
