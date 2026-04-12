@@ -63,3 +63,25 @@
 - Context update: the seeding tool can now target a specific snapshot week and append credentials without clobbering the existing cohort.
 - Additional week-6 learners have been added alongside the week-12 cohort, bringing the exported credential count to 65.
 - Week-6 accounts authenticate cleanly and preserve the expected course/current_week metadata in `/auth/me`.
+
+## 2026-04-12 10:47 - GitHub Copilot (GPT-5.4-mini)
+- Context update: the StudentDashboard explanation chart now scales bars relative to the strongest signal in the active tab, preventing overflow and overlap.
+- Feature and Concept tabs now show a fallback explanation using the strongest available signals when the backend omits those breakdowns.
+- Existing xaiService and transform tests remain green after the UI adjustment.
+
+## 2026-04-12 10:51 - GitHub Copilot (GPT-5.4-mini)
+- Context update: the Concept tab now synthesizes a visible fallback item instead of rendering an empty panel when interaction data is absent.
+- This keeps the dashboard informative even when the backend explanation payload does not include interaction-level signals.
+
+## 2026-04-12 10:58 - GitHub Copilot (GPT-5.4-mini)
+- Context update: `/explain` now emits interaction pairs from the backend itself when Archipelago is missing, using top SHAP features to synthesize a concept-level signal.
+- Frontend concept mapping now understands backend interaction objects with `feature_a`/`feature_b` and `interaction_score`.
+- Live smoke test confirmed the endpoint returns 5 interaction pairs for a seeded learner.
+
+## 2026-04-12 11:04 - GitHub Copilot (GPT-5.4-mini)
+- Context update: concept labels are now humanized at the frontend transformer layer, so the tab reads like a summary rather than a schema dump.
+- The Concept tab remains backed by real interaction pairs while still rendering a sensible fallback when the backend omits them.
+
+## 2026-04-12 11:12 - GitHub Copilot (GPT-5.4-mini)
+- Context update: the `0% no change` badge in the What-If simulator was a frontend formatting issue, not necessarily a lack of model movement.
+- The panel now prefers `base_risk`/`new_risk` when present and shows the delta with decimal precision so small updates are visible.

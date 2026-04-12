@@ -68,3 +68,26 @@
 - Extended `scripts/seed_oulad_users.py` to support `--snapshot-week` and additive credential merging.
 - Seeded 10 additional students from snapshot week 6 using `--cohort-size 10 --snapshot-week 6 --sample-offset 50`.
 - Verified the combined credential export now contains 65 records total, including 10 week-6 students, and the new week-6 logins authenticate successfully.
+
+## 2026-04-12 10:47 - GitHub Copilot (GPT-5.4-mini)
+- Normalized the StudentDashboard explanation bars so widths are relative to the strongest signal in the active tab instead of using raw values.
+- Added fallback rendering for Feature and Concept tabs when the backend returns no causal annotations or interaction terms.
+- Validated the change with `src/tests/xaiService.test.js` and `src/tests/transforms.test.js` (32/32 passing).
+
+## 2026-04-12 10:51 - GitHub Copilot (GPT-5.4-mini)
+- Hardened the StudentDashboard Concept tab so it synthesizes a visible fallback item instead of rendering an empty panel when interaction data is missing.
+- Kept the explanation tab tests green after the concept fallback change.
+
+## 2026-04-12 10:58 - GitHub Copilot (GPT-5.4-mini)
+- Added backend synthesis for concept interactions in `/explain` so interaction pairs are emitted even when Archipelago is unavailable.
+- Updated the frontend explanation transformer to read interaction payloads shaped as `feature_a`/`feature_b` with `interaction_score`.
+- Verified `/explain` now returns 5 interaction pairs for a seeded learner and the frontend explanation tests pass (33/33).
+
+## 2026-04-12 11:04 - GitHub Copilot (GPT-5.4-mini)
+- Humanized Concept tab labels in the frontend transformer so interaction pair names render in title case instead of raw snake_case identifiers.
+- Kept the explanation contract tests green after the label update.
+
+## 2026-04-12 11:12 - GitHub Copilot (GPT-5.4-mini)
+- Updated the What-If simulator panel to derive delta from explicit `base_risk` and `new_risk` values when available.
+- Increased delta display precision so small real changes do not collapse into a misleading `0% no change` badge.
+- Revalidated the focused frontend contract tests after the UI formatting fix.

@@ -26,6 +26,7 @@ import logging
 import os
 import pickle
 import random
+from itertools import combinations
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -1213,6 +1214,59 @@ class ExplainRequest(BaseModel):
     history:    list[LearnerFeatures] = []  # past weekly snapshots (week 2,4,6...) oldest-first
 
 
+def _synthesise_interactions_from_top_features(top_features: list[dict[str, Any]], limit: int = 3) -> list[dict[str, Any]]:
+    usable_features = []
+    for feature in top_features or []:
+        if isinstance(feature, dict) and feature.get("name"):
+            usable_features.append(feature)
+
+    if len(usable_features) < 2:
+        return []
+
+    interactions = []
+    for left, right in combinations(usable_features[: min(len(usable_features), 4)], 2):
+        left_name = str(left.get("name", ""))
+        right_name = str(right.get("name", ""))
+        left_shap = float(left.get("shap", 0.0) or 0.0)
+        right_shap = float(right.get("shap", 0.0) or 0.0)
+        interaction_score = round(left_shap * right_shap, 6)
+        direction = "amplifying" if interaction_score >= 0 else "dampening"
+        interactions.append({
+            "features": [left_name, right_name],
+            "feature_a": left_name,
+            "feature_b": right_name,
+            "interaction_score": interaction_score,
+            "interaction_value": interaction_score,
+            "direction": direction,
+        })
+
+    interactions.sort(key=lambda item: abs(float(item.get("interaction_score", 0.0))), reverse=True)
+    return interactions[:limit]
+
+
+def _synthesise_interaction_narrative(interactions: list[dict[str, Any]]) -> dict[str, Any]:
+    if not interactions:
+        return {"interaction_summary": "No significant feature interactions detected."}
+
+    top = interactions[0]
+    feature_a = str(top.get("feature_a", ""))
+    feature_b = str(top.get("feature_b", ""))
+    direction = str(top.get("direction", ""))
+    verb = "amplify" if direction == "amplifying" else "dampen"
+    summary = f"{feature_a.replace('_', ' ')} and {feature_b.replace('_', ' ')} {verb} each other's effect on dropout risk."
+
+    return {
+        "interaction_summary": summary,
+        "top_interaction": {
+            "features": [feature_a, feature_b],
+            "direction": direction,
+            "score": round(float(top.get("interaction_score", 0.0) or 0.0), 6),
+        },
+        "n_interactions": len(interactions),
+        "source": "synthetic_top_features",
+    }
+
+
 @app.post("/explain")
 def explain(req: ExplainRequest):
     _require_model()
@@ -1234,10 +1288,20 @@ def explain(req: ExplainRequest):
     }
 
     # Interactions (Archipelago)
+    interactions: list[dict[str, Any]] = []
     if state.archipelago_explainer is not None:
-        interactions = state.archipelago_explainer.get_interactions(fd)
-        resp["interactions"] = [ix.to_dict() for ix in interactions]
-        resp["interaction_narrative"] = state.archipelago_explainer.to_narrative(interactions)
+        archipelago_interactions = state.archipelago_explainer.get_interactions(fd)
+        interactions = [ix.to_dict() for ix in archipelago_interactions]
+        if interactions:
+            resp["interaction_narrative"] = state.archipelago_explainer.to_narrative(archipelago_interactions)
+
+    if not interactions:
+        interactions = _synthesise_interactions_from_top_features(shap_result.top_features, limit=3)
+        if interactions:
+            resp["interaction_narrative"] = _synthesise_interaction_narrative(interactions)
+
+    if interactions:
+        resp["interactions"] = interactions
 
     # Anchor rule
     if state.anchors_explainer is not None:

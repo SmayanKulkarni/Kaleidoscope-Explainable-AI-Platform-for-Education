@@ -21,30 +21,79 @@ export default function StudentDashboard() {
 
   const explanation = data?.rawExplain;
 
+  const buildFallbackItems = (items, emptyLabel) => {
+    if (items.length > 0) return items;
+    return [
+      {
+        name: emptyLabel,
+        value: 1,
+        direction: 'increases',
+      },
+    ];
+  };
+
+  const getTabData = () => {
+    const fallbackSignals = (data?.shapFeatures ?? []).slice(0, 3).map((feature) => ({
+      ...feature,
+      type: 'fallback',
+    }));
+
+    const conceptFallbackSignals = buildFallbackItems(
+      (data?.conceptAnalysis?.length ? data.conceptAnalysis : fallbackSignals),
+      'No concept-level interaction data was returned for this learner yet.',
+    );
+
+    if (activeTab === 'Prediction') return data?.shapFeatures ?? [];
+    if (activeTab === 'Feature') return (data?.featureContributions?.length ? data.featureContributions : fallbackSignals);
+    return conceptFallbackSignals;
+  };
+
+  const getFallbackMessage = () => {
+    if (activeTab === 'Feature' && !(data?.featureContributions?.length > 0)) {
+      return 'No causal-annotation breakdown was returned for this learner, so the strongest prediction signals are shown here instead.';
+    }
+    if (activeTab === 'Concept' && !(data?.conceptAnalysis?.length > 0)) {
+      return 'No interaction-level breakdown was returned for this learner, so the strongest available signals are shown here instead.';
+    }
+    return '';
+  };
+
   if (isLoading || !data) return <div className="min-h-screen flex items-center justify-center bg-surface">Loading Dashboard...</div>;
 
   const renderTabContent = () => {
-    let listData = [];
-    if (activeTab === 'Prediction') listData = data.shapFeatures;
-    else if (activeTab === 'Feature') listData = data.featureContributions;
-    else if (activeTab === 'Concept') listData = data.conceptAnalysis;
+    const listData = getTabData();
+    const maxMagnitude = Math.max(
+      0,
+      ...listData.map((item) => Math.abs(Number(item.value) || 0)),
+    );
 
     return (
       <div className="relative pt-6">
         <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-primary/20"></div>
-        {listData.map(f => (
+        {getFallbackMessage() && (
+          <div className="mb-5 rounded-xl border border-primary/10 bg-primary/5 px-4 py-3 text-sm text-primary leading-relaxed">
+            {getFallbackMessage()}
+          </div>
+        )}
+        {listData.map((f, index) => (
           <div key={f.name} className="relative flex items-center h-12 mb-6">
             {f.direction === 'increases' ? (
               <>
                 <div className="w-1/2 pr-6 text-right"><span className="font-label text-xs text-slate-500">{f.name}</span></div>
                 <div className="w-1/2 pl-0">
-                   <div className="h-6 bg-tertiary rounded-r-lg group relative" style={{width: `${f.value*100}%`}}></div>
+                   <div
+                     className="h-6 bg-tertiary rounded-r-lg group relative overflow-hidden"
+                     style={{ width: maxMagnitude > 0 ? `${Math.max(10, (Math.abs(Number(f.value) || 0) / maxMagnitude) * 100)}%` : `${Math.max(10, 100 - index * 15)}%` }}
+                   ></div>
                 </div>
               </>
             ) : (
               <>
                 <div className="w-1/2 pr-0 flex justify-end">
-                  <div className="h-6 bg-secondary rounded-l-lg group relative" style={{width: `${f.value*100}%`}}></div>
+                  <div
+                    className="h-6 bg-secondary rounded-l-lg group relative overflow-hidden"
+                    style={{ width: maxMagnitude > 0 ? `${Math.max(10, (Math.abs(Number(f.value) || 0) / maxMagnitude) * 100)}%` : `${Math.max(10, 100 - index * 15)}%` }}
+                  ></div>
                 </div>
                 <div className="w-1/2 pl-6"><span className="font-label text-xs text-slate-500">{f.name}</span></div>
               </>

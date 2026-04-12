@@ -29,8 +29,11 @@ export default function WhatIfForm({ baseFeatures, mode = 'dropout', learner_id,
     setResult(null);
   };
 
-  const delta   = result?.risk_delta ?? result?.score_delta ?? null;
-  const newRisk = result?.risk_score ?? result?.modified_score ?? null;
+  const baseRisk = result?.base_risk ?? result?.baseRisk ?? null;
+  const newRisk = result?.new_risk ?? result?.risk_score ?? result?.modified_score ?? null;
+  const delta = baseRisk != null && newRisk != null
+    ? newRisk - baseRisk
+    : (result?.risk_delta ?? result?.score_delta ?? null);
 
   return (
     <div className="bg-surface-container-lowest rounded-2xl p-6 border border-outline-variant/10">
@@ -73,7 +76,7 @@ export default function WhatIfForm({ baseFeatures, mode = 'dropout', learner_id,
               <span className="material-symbols-outlined text-sm align-sub mr-1">
                 {delta < 0 ? 'arrow_downward' : delta > 0 ? 'arrow_upward' : 'horizontal_rule'}
               </span>
-              {Math.abs(Math.round(delta * 100))}% {delta === 0 ? 'no change' : delta < 0 ? 'decrease' : 'increase'}
+              {Math.abs(delta * 100).toFixed(2)}% {delta === 0 ? 'no change' : delta < 0 ? 'decrease' : 'increase'}
             </div>
           )}
           {mutation.isPending && (

@@ -84,3 +84,40 @@
   `Python snippet via configured venv to confirm 65 total credential records and 10 week-6 students`
   `Python snippet via configured venv to authenticate two new week-6 student logins and check /auth/me`
 - Outcome: week-6 cohort was appended, the credential files were merged instead of overwritten, and the new accounts authenticated correctly.
+
+## 2026-04-12 10:47 - GitHub Copilot (GPT-5.4-mini)
+- User request applied: fix the overlapping orange bar and the empty Feature/Concept explanation tabs.
+- Commands run:
+  `frontend/src/pages/StudentDashboard.jsx` edited to normalize bar widths and add fallback tab content
+  `cd "/media/smayan/500GB SSD/Datahack 4.0/frontend" && npm exec vitest run src/tests/xaiService.test.js src/tests/transforms.test.js`
+- Outcome: the dashboard no longer uses raw widths that overflow the layout, and the explanation transform tests still pass.
+
+## 2026-04-12 10:51 - GitHub Copilot (GPT-5.4-mini)
+- User request applied: concept tab is still not working.
+- Commands run:
+  `frontend/src/pages/StudentDashboard.jsx` edited to synthesize fallback concept signals when no interaction data exists
+  `cd "/media/smayan/500GB SSD/Datahack 4.0/frontend" && npm exec vitest run src/tests/xaiService.test.js src/tests/transforms.test.js`
+- Outcome: the Concept tab now always renders a visible signal row instead of an empty axis-only panel.
+
+## 2026-04-12 10:58 - GitHub Copilot (GPT-5.4-mini)
+- User request applied: do both - make concept real and keep the fallback from breaking the UI.
+- Commands run:
+  `cd "/media/smayan/500GB SSD/Datahack 4.0" && source ".venv/bin/activate" && python -m py_compile /media/smayan/500GB\ SSD/Datahack\ 4.0/backend/app/main.py && echo BACKEND_COMPILE_OK`
+  `Python snippet via configured venv (with backend/.env loaded before imports) to POST /explain for learner AAA_2013J_1618738`
+  `cd "/media/smayan/500GB SSD/Datahack 4.0/frontend" && npm exec vitest run src/tests/xaiService.test.js src/tests/transforms.test.js`
+- Outcome: `/explain` now returns actual interaction pairs, and the frontend maps them into Concept tab rows correctly.
+
+## 2026-04-12 11:04 - GitHub Copilot (GPT-5.4-mini)
+- User request applied: make the concept labels look more like concepts.
+- Commands run:
+  `frontend/src/services/xaiService.js` edited to humanize interaction labels
+  `frontend/src/tests/xaiService.test.js` updated to expect title-cased concept labels
+  `cd "/media/smayan/500GB SSD/Datahack 4.0/frontend" && npm exec vitest run src/tests/xaiService.test.js src/tests/transforms.test.js`
+- Outcome: the Concept tab now shows readable labels like "Days Since Last Activity × Assignment Submission Rate".
+
+## 2026-04-12 11:12 - GitHub Copilot (GPT-5.4-mini)
+- User request applied: explain why the What-If panel showed `0% no change` and make it update correctly.
+- Commands run:
+  `frontend/src/components/panels/WhatIfForm.jsx` edited to prefer explicit base/new risk values and render delta with higher precision
+  `cd "/media/smayan/500GB SSD/Datahack 4.0/frontend" && npm exec vitest run src/tests/xaiService.test.js src/tests/transforms.test.js`
+- Outcome: the What-If badge will no longer hide small changes behind integer rounding.

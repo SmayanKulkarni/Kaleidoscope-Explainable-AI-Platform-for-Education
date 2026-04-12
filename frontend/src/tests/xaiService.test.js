@@ -10,6 +10,7 @@ import {
   getStudentData,
   simulateWhatIf,
   getStoredFeatures,
+  transformExplainResponse,
 } from '../services/xaiService';
 
 const MOCK_FEATURES = {
@@ -121,6 +122,31 @@ describe('getStudentData', () => {
     api.post.mockResolvedValueOnce({ data: { ...MOCK_EXPLAIN_RESP, risk_score: 0.63 } });
     const result = await getStudentData({ features: MOCK_FEATURES, learner_id: 'L009' });
     expect(result.riskScore).toBe(63);
+  });
+});
+
+describe('transformExplainResponse', () => {
+  it('maps backend interaction pairs into concept analysis entries', () => {
+    const result = transformExplainResponse({
+      ...MOCK_EXPLAIN_RESP,
+      interactions: [
+        {
+          feature_a: 'days_since_last_activity',
+          feature_b: 'assignment_submission_rate',
+          interaction_score: 0.24,
+          direction: 'amplifying',
+        },
+      ],
+    });
+
+    expect(result.conceptAnalysis).toEqual([
+      {
+        name: 'Days Since Last Activity × Assignment Submission Rate',
+        value: 0.24,
+        direction: 'increases',
+        type: 'amplifying',
+      },
+    ]);
   });
 });
 

@@ -68,6 +68,13 @@ function mapTopAction(action) {
   };
 }
 
+function humanizeFeatureName(name) {
+  return String(name ?? '')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+}
+
 export function getStoredFeatures(learner_id) {
   if (!learner_id || !storageAvailable()) return null;
   return safeParseJson(window.sessionStorage.getItem(getFeatureStorageKey(learner_id)));
@@ -135,8 +142,29 @@ export function transformExplainResponse(resp) {
   const topFeatures = Array.isArray(result.top_features) ? result.top_features : [];
   const causalAnnotations = Array.isArray(result.causal_annotations) ? result.causal_annotations : [];
   const interactions = Array.isArray(result.interactions) ? result.interactions : [];
+  const featureInteractions = Array.isArray(result.feature_interactions) ? result.feature_interactions : [];
   const prototypes = result.prototypes?.matches ?? [];
   const rankedActions = Array.isArray(result.ranked_actions) ? result.ranked_actions : [];
+  const interactionSource = interactions.length > 0 ? interactions : featureInteractions;
+  const interactionNarrative = result.interaction_narrative;
+
+  const mappedInteractions = interactionSource.map((interaction, index) => {
+    const featureNames = Array.isArray(interaction.features)
+      ? interaction.features.filter(Boolean)
+      : [interaction.feature_a, interaction.feature_b].filter(Boolean);
+    const rawValue = Number(
+      interaction.interaction_value ?? interaction.interaction_score ?? interaction.score ?? 0,
+    );
+
+    return {
+      name: featureNames.length > 0
+        ? featureNames.map(humanizeFeatureName).join(' × ')
+        : humanizeFeatureName(interaction.name || `Interaction ${index + 1}`),
+      value: Math.abs(rawValue),
+      direction: mapDirection(rawValue),
+      type: interaction.direction || interaction.type || 'interaction',
+    };
+  });
 
   return {
     riskScore: normalizePercent(result.risk_score),
@@ -164,18 +192,14 @@ export function transformExplainResponse(resp) {
       direction: mapDirection(annotation.shap_value),
       type: annotation.causal_type || 'correlational',
     })),
-    conceptAnalysis: interactions.map((interaction) => ({
-      name: interaction.features ? interaction.features.join(' × ') : (interaction.name || ''),
-      value: Math.abs(Number(interaction.interaction_value) || 0),
-      direction: mapDirection(interaction.interaction_value),
-    })),
+    conceptAnalysis: mappedInteractions,
     lookalikes: prototypes.map((match) => ({
       id: match.learner_id,
       match: normalizePercent(match.similarity),
       outcome: String(match.outcome ?? '').toUpperCase().replaceAll('_', ' '),
       diff: match.diff_features || [],
     })),
-    aiNarrative: result.narratives?.learner || result.narratives?.instructor || result.interaction_narrative || '',
+    aiNarrative: result.narratives?.learner || result.narratives?.instructor || interactionNarrative?.interaction_summary || interactionNarrative || '',
     anchorRule: result.anchor_rule?.human_readable || result.anchor_rule?.rule || '',
     rankedActions,
     rawExplain: result,
