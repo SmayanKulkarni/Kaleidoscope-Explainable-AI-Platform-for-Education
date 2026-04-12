@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
@@ -9,7 +9,6 @@ import { getInstructorStudents } from '../api/recommend';
 export default function ActionPlan() {
   const { user } = useAuth();
   const isInstructor = user?.role === 'instructor';
-  const [data, setData] = useState(null);
   const [selectedStudentId, setSelectedStudentId] = useState(null);
 
   const { data: roster } = useQuery({
@@ -20,13 +19,30 @@ export default function ActionPlan() {
   });
   const students = roster?.students ?? [];
 
-  useEffect(() => { getStudentData().then(setData); }, []);
+  useEffect(() => {
+    if (isInstructor && !selectedStudentId && students.length > 0) {
+      setSelectedStudentId(students[0].learner_id ?? null);
+    }
+  }, [isInstructor, selectedStudentId, students]);
 
   const selectedStudent = isInstructor && selectedStudentId
     ? students.find(s => s.learner_id === selectedStudentId)
     : null;
 
-  if (!data) return <div className="min-h-screen bg-surface flex justify-center items-center">Loading Action Plan...</div>;
+  const activeLearnerId = isInstructor
+    ? (selectedStudentId ?? students[0]?.learner_id ?? null)
+    : (user?.learner_id ?? user?.id ?? localStorage.getItem('ll_learner_id') ?? null);
+
+  const { data, isLoading: actionPlanLoading } = useQuery({
+    queryKey: ['action-plan', activeLearnerId],
+    queryFn: () => getStudentData({ learner_id: activeLearnerId, audience: 'learner' }),
+    enabled: !!activeLearnerId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (!activeLearnerId || (!data && actionPlanLoading)) {
+    return <div className="min-h-screen bg-surface flex justify-center items-center">Loading Action Plan...</div>;
+  }
 
   return (
     <div className="bg-surface font-body text-on-surface min-h-screen">
@@ -71,7 +87,6 @@ export default function ActionPlan() {
           </div>
 
           <div className="space-y-6">
-            
             <div className="bg-gradient-to-br from-primary to-primary-container rounded-2xl p-8 shadow-lg text-on-primary relative overflow-hidden group hover:shadow-xl transition-shadow scale-[1.02]">
               <div className="absolute right-0 top-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-10 -mt-10 group-hover:bg-white/20 transition-colors"></div>
               
@@ -82,11 +97,11 @@ export default function ActionPlan() {
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="font-label text-[10px] uppercase font-bold tracking-widest bg-white/20 px-2 py-1 rounded text-white">Top Priority</span>
-                    <span className="font-label text-xs font-bold text-primary-fixed bg-on-primary/40 px-2 py-1 rounded">-12% Risk Drop</span>
+                    <span className="font-label text-xs font-bold text-primary-fixed bg-on-primary/40 px-2 py-1 rounded">-{data?.topAction?.riskReduction ?? 0}% Risk Drop</span>
                   </div>
-                  <h3 className="text-2xl font-headline font-bold mb-3 text-white">Attend TA Office Hours Before Assignment #4</h3>
+                  <h3 className="text-2xl font-headline font-bold mb-3 text-white">{data?.topAction?.label ?? 'Review your recent learning activity'}</h3>
                   <p className="text-on-primary/80 mb-6 leading-relaxed">
-                    The model identifies a strong correlation (0.84) between attending office hours this week and higher success rates on Assignment 4.
+                    {data?.aiNarrative || 'The model has not returned a narrative yet, but the latest explanation has been loaded from the learner profile.'}
                   </p>
                   
                   <div className="flex gap-4">
@@ -104,6 +119,33 @@ export default function ActionPlan() {
               </div>
             </div>
 
+            <div className="bg-surface-container-lowest rounded-2xl p-8 border border-outline-variant/10 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
+                <div>
+                  <h3 className="text-xl font-headline font-bold">Latest Learner Snapshot</h3>
+                  <p className="text-sm text-slate-500">This pulls from the same explainability endpoint used by the student overview page.</p>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="px-3 py-1 rounded-full bg-primary/10 text-primary font-bold">Risk {data?.riskScore ?? 0}%</span>
+                  <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 font-bold">{data?.riskLevel ?? 'UNKNOWN'}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {(data?.rankedActions ?? []).slice(0, 3).map((action, index) => (
+                  <div key={index} className="rounded-xl border border-outline-variant/10 bg-surface p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <span className="text-xs uppercase font-bold tracking-widest text-slate-400">Priority {index + 1}</span>
+                      <span className="text-xs font-bold text-primary">-{Math.round(Math.abs(Number(action.estimated_impact || 0)) * 100)}%</span>
+                    </div>
+                    <p className="font-semibold text-sm leading-snug">{action.plain_language ?? action.feature ?? 'Recommended action'}</p>
+                  </div>
+                ))}
+                {(data?.rankedActions ?? []).length === 0 && (
+                  <p className="text-sm text-slate-400">No ranked actions were returned for this learner yet.</p>
+                )}
+              </div>
+            </div>
+
             <div className="bg-surface-container-lowest rounded-2xl p-8 border border-outline-variant/10 hover:border-primary/30 transition-colors flex flex-col md:flex-row gap-8 items-start">
                <div className="w-16 h-16 bg-surface-container rounded-2xl flex items-center justify-center shrink-0 text-slate-400">
                   <span className="material-symbols-outlined text-4xl">forum</span>
@@ -111,11 +153,11 @@ export default function ActionPlan() {
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
                     <span className="font-label text-[10px] uppercase font-bold tracking-widest text-slate-500">Secondary Action</span>
-                    <span className="font-label text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded">-5% Risk Drop</span>
+                    <span className="font-label text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded">-{Math.max(0, Math.round((data?.trustScore ?? 0) * 5))}% Risk Drop</span>
                   </div>
-                  <h3 className="text-xl font-headline font-bold mb-3">Post 1 Question in the Weekly Forum</h3>
+                  <h3 className="text-xl font-headline font-bold mb-3">{data?.shapFeatures?.[0]?.name ?? 'Post 1 Question in the Weekly Forum'}</h3>
                   <p className="text-slate-500 mb-6 leading-relaxed">
-                    Engagement in the forum strongly boosts concept retention for Module 3 topics.
+                    {data?.shapFeatures?.[0] ? 'This recommendation is derived from the strongest current explanation signal.' : 'Engagement in the forum strongly boosts concept retention for Module 3 topics.'}
                   </p>
                   <button className="border-2 border-primary text-primary px-6 py-2.5 rounded-xl font-bold font-label text-sm hover:bg-primary/5 transition-colors">
                     Go to Forums

@@ -12,12 +12,12 @@ const CausalDagGraph = lazy(() => import('../components/graphs/CausalDagGraph'))
 // Representative sample — includes protected attributes so the fairness audit has
 // demographic data to bucket and compare across groups.
 const ADMIN_SAMPLE_ITEMS = [
-  { item_id: 'Module 4 Quiz',     features: { difficulty: 0.6, time_required: 30,  explicit_gender: 'M',   explicit_age_band: '0-35',  explicit_disability: 'N' } },
-  { item_id: 'TA Office Hours',   features: { difficulty: 0.2, time_required: 60,  explicit_gender: 'F',   explicit_age_band: '0-35',  explicit_disability: 'N' } },
-  { item_id: 'Forum Week 6',      features: { difficulty: 0.1, time_required: 15,  explicit_gender: 'M',   explicit_age_band: '35-55', explicit_disability: 'N' } },
-  { item_id: 'Practice Set A',    features: { difficulty: 0.5, time_required: 45,  explicit_gender: 'F',   explicit_age_band: '35-55', explicit_disability: 'Y' } },
-  { item_id: 'Video Lecture 7',   features: { difficulty: 0.3, time_required: 20,  explicit_gender: 'M',   explicit_age_band: '55<=',  explicit_disability: 'N' } },
-  { item_id: 'Peer Review Task',  features: { difficulty: 0.4, time_required: 35,  explicit_gender: 'F',   explicit_age_band: '0-35',  explicit_disability: 'Y' } },
+  { item_id: 'Module 4 Quiz', features: { difficulty: 0.6, time_required: 30, explicit_gender: 'M', explicit_age_band: '0-35', explicit_disability: 'N' } },
+  { item_id: 'TA Office Hours', features: { difficulty: 0.2, time_required: 60, explicit_gender: 'F', explicit_age_band: '0-35', explicit_disability: 'N' } },
+  { item_id: 'Forum Week 6', features: { difficulty: 0.1, time_required: 15, explicit_gender: 'M', explicit_age_band: '35-55', explicit_disability: 'N' } },
+  { item_id: 'Practice Set A', features: { difficulty: 0.5, time_required: 45, explicit_gender: 'F', explicit_age_band: '35-55', explicit_disability: 'Y' } },
+  { item_id: 'Video Lecture 7', features: { difficulty: 0.3, time_required: 20, explicit_gender: 'M', explicit_age_band: '55<=', explicit_disability: 'N' } },
+  { item_id: 'Peer Review Task', features: { difficulty: 0.4, time_required: 35, explicit_gender: 'F', explicit_age_band: '0-35', explicit_disability: 'Y' } },
 ];
 
 function HealthDot({ ok }) {
@@ -39,21 +39,21 @@ function StatCard({ label, value, icon, sub }) {
 
 export default function AdminDashboard() {
   const [canaryFraction, setCanaryFraction] = useState(0.1);
-  const [runFairness, setRunFairness]       = useState(false);
+  const [runFairness, setRunFairness] = useState(false);
   const [fairnessExplanation, setFairnessExplanation] = useState(null);
-  const [enrollForm, setEnrollForm] = useState({ learner_id: '', instructor_profile_id: '', course_id: 'CCC' });
+  const [enrollForm, setEnrollForm] = useState({ learner_id: '', instructor_profile_id: '', course_id: 'COURSE-001' });
   const [enrollError, setEnrollError] = useState(null);
 
   const { data: fairnessSample, isLoading: fairnessLoading } = useQuery({
     queryKey: ['admin-fairness-sample'],
-    queryFn:  () => recommendStudent('admin_sample', ADMIN_SAMPLE_ITEMS, 6),
-    enabled:  runFairness,
+    queryFn: () => recommendStudent('admin_sample', ADMIN_SAMPLE_ITEMS, 6),
+    enabled: runFairness,
     staleTime: 5 * 60 * 1000,
   });
 
   const explainMutation = useMutation({
     mutationFn: (report) => explainFairness(report),
-    onSuccess:  (data)   => setFairnessExplanation(data),
+    onSuccess: (data) => setFairnessExplanation(data),
   });
 
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 });
@@ -79,7 +79,7 @@ export default function AdminDashboard() {
 
   const addEnrollMutation = useMutation({
     mutationFn: addAdminEnrollment,
-    onSuccess: () => { setEnrollForm({ learner_id: '', instructor_profile_id: '', course_id: 'CCC' }); setEnrollError(null); refetchEnrollments(); },
+    onSuccess: () => { setEnrollForm({ learner_id: '', instructor_profile_id: '', course_id: 'COURSE-001' }); setEnrollError(null); refetchEnrollments(); },
     onError: (e) => setEnrollError(e.response?.data?.detail ?? 'Failed to enroll'),
   });
 
@@ -319,8 +319,8 @@ export default function AdminDashboard() {
                     className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-full sm:w-56 focus:outline-none focus:ring-1 focus:ring-primary"
                   >
                     <option value="">— Select Instructor —</option>
-                      {(instructors?.instructors ?? []).map(ins => (
-                      <option key={ins.profile_id} value={ins.profile_id}>{ins.full_name ?? ins.username} ({ins.student_count} students)</option>
+                    {(instructors?.instructors ?? []).map(ins => (
+                      <option key={ins.profile_id ?? ins.instructor_profile_id} value={ins.profile_id ?? ins.instructor_profile_id}>{ins.full_name ?? ins.username ?? ins.profile_id ?? ins.instructor_profile_id}</option>
                     ))}
                   </select>
                   <input
@@ -332,7 +332,7 @@ export default function AdminDashboard() {
                   />
                   <button
                     onClick={() => addEnrollMutation.mutate(enrollForm)}
-                   disabled={addEnrollMutation.isPending || !enrollForm.learner_id || !enrollForm.instructor_profile_id}
+                    disabled={addEnrollMutation.isPending || !enrollForm.learner_id || !enrollForm.instructor_profile_id}
                     className="px-4 py-2 bg-primary text-white rounded-lg font-bold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0"
                   >
                     <span className="material-symbols-outlined text-sm">person_add</span> Enroll
@@ -355,7 +355,7 @@ export default function AdminDashboard() {
                     {(enrollments?.enrollments ?? []).map(e => (
                       <tr key={e.id} className="hover:bg-primary/5 transition-colors">
                         <td className="px-6 py-3 font-label text-sm font-bold">{e.learner_id}</td>
-                        <td className="px-6 py-3 font-label text-sm text-slate-600">{e.student_name ?? e.instructor_profile_id}</td>
+                        <td className="px-6 py-3 font-label text-sm text-slate-600">{e.instructor_name ?? e.instructor_username ?? e.instructor_profile_id}</td>
                         <td className="px-6 py-3 font-label text-sm text-slate-500">{e.course_id}</td>
                         <td className="px-6 py-3 font-label text-xs text-slate-400">{e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : '—'}</td>
                         <td className="px-6 py-3">
