@@ -381,6 +381,83 @@ def _build_instructor_payload(explain_resp: dict, learner_id: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Rule-based fallbacks (used when LLM is unavailable or errors)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _rule_based_learner_text(explain_resp: dict) -> str:
+    risk_score = float(explain_resp.get("risk_score", 0.5))
+    risk_label = explain_resp.get("risk_label", "Medium")
+    shap = explain_resp.get("shap_values", {})
+    top_feats = sorted(shap.items(), key=lambda x: abs(x[1]), reverse=True)[:2]
+    ranked = explain_resp.get("ranked_actions") or []
+    top_action = _get_top_action_str(ranked)
+    parts = [f"Your current dropout risk is {risk_label.lower()} ({risk_score:.0%})."]
+    if top_feats:
+        f0, v0 = top_feats[0]
+        direction = "high" if v0 > 0 else "low"
+        parts.append(f"The biggest factor is your {direction} {f0.replace('_', ' ')}.")
+    parts.append(f"Your top priority: {top_action}.")
+    return " ".join(parts)
+
+
+def _rule_based_instructor_text(explain_resp: dict, learner_id: str) -> str:
+    risk_score = float(explain_resp.get("risk_score", 0.5))
+    risk_label = explain_resp.get("risk_label", "Medium")
+    shap = explain_resp.get("shap_values", {})
+    top_feats = sorted(shap.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
+    anchor = explain_resp.get("anchor_rule") or {}
+    anchor_rule = (
+        anchor.get("human_readable") or anchor.get("anchor_rule")
+        if isinstance(anchor, dict) else str(anchor)
+    ) or "No anchor rule derived"
+    trust = explain_resp.get("trust_score") or {}
+    trust_val = trust.get("trust_score", "N/A") if isinstance(trust, dict) else "N/A"
+    ranked = explain_resp.get("ranked_actions") or []
+    top_action = _get_top_action_str(ranked) if ranked else "Review engagement patterns"
+    drivers = ", ".join(f.replace("_", " ") for f, _ in top_feats) or "insufficient data"
+    return (
+        f"Risk summary: {learner_id} shows {risk_label} dropout risk ({risk_score:.0%}). "
+        f"Key drivers: {drivers}. "
+        f"Decision rule: {anchor_rule}. "
+        f"Trust score: {trust_val}. "
+        f"Recommended intervention: {top_action}."
+    )
+
+
+def _rule_based_reco_learner_text(explain_resp: dict) -> str:
+    item_id = explain_resp.get("item_id", "the recommended activity")
+    score = float(explain_resp.get("score", 0.0))
+    shap = explain_resp.get("shap_values", {})
+    top_feats = sorted(shap.items(), key=lambda x: abs(x[1]), reverse=True)[:2]
+    anchor = explain_resp.get("anchor_rule") or ""
+    anchor_str = anchor if isinstance(anchor, str) else "Complete the recommended activity"
+    parts = [f"This recommendation ({item_id}) has a relevance score of {score:.2f}."]
+    if top_feats:
+        f0 = top_feats[0][0].replace("_", " ")
+        parts.append(f"Your {f0} is a key factor in this recommendation.")
+    parts.append(f"Your next step: {anchor_str or 'engage with this activity to stay on track'}.")
+    return " ".join(parts)
+
+
+def _rule_based_reco_instructor_text(explain_resp: dict, learner_id: str) -> str:
+    item_id = explain_resp.get("item_id", "the assigned student")
+    score = float(explain_resp.get("score", 0.0))
+    shap = explain_resp.get("shap_values", {})
+    top_feats = sorted(shap.items(), key=lambda x: abs(x[1]), reverse=True)[:2]
+    int_type = explain_resp.get("intervention_type", "general")
+    stu_risk = explain_resp.get("student_dropout_risk_score", "N/A")
+    anchor = explain_resp.get("anchor_rule") or "No specific rule derived"
+    anchor_str = anchor if isinstance(anchor, str) else "No specific rule derived"
+    drivers = ", ".join(f.replace("_", " ") for f, _ in top_feats) or "key engagement features"
+    return (
+        f"Student {item_id} has a priority score of {score:.3f} (risk: {stu_risk}). "
+        f"Key drivers: {drivers}. "
+        f"Decision rule: {anchor_str}. "
+        f"Suggested follow-up: Apply a {int_type} intervention."
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Narrator class
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -419,10 +496,10 @@ class LLMNarrator:
     def available(self) -> bool:
         return self._client is not None
 
-    def _call(self, system_prompt: str, user_message: str) -> tuple[str, int]:
-        """Make a Groq API call. Returns (text, tokens_used)."""
+    def _call(self, system_prompt: str, user_message: str) -> tuple[Optional[str], int]:
+        """Make a Groq API call. Returns (text, tokens_used) or (None, 0) on failure."""
         if not self._client:
-            return "[Narration unavailable — GROQ_API_KEY not configured]", 0
+            return None, 0
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
@@ -433,24 +510,24 @@ class LLMNarrator:
                 max_tokens=256,
                 temperature=0.3,
             )
-            text   = response.choices[0].message.content.strip()
+            text   = (response.choices[0].message.content or "").strip() or None
             tokens = response.usage.total_tokens if response.usage else 0
             return text, tokens
         except Exception as e:
             log.error("Groq narration error: %s", e)
-            return f"[Narration error: {e}]", 0
+            return None, 0
 
     def narrate_learner(self, explain_resp: dict, learner_id: str = "you") -> str:
         """Generate motivational learner narrative from pre-computed XAI data."""
         payload = _build_learner_payload(explain_resp, learner_id)
         text, _ = self._call(LEARNER_SYSTEM_PROMPT, payload)
-        return text
+        return text if text is not None else _rule_based_learner_text(explain_resp)
 
     def narrate_instructor(self, explain_resp: dict, learner_id: str = "learner") -> str:
         """Generate technical instructor narrative from pre-computed XAI data."""
         payload = _build_instructor_payload(explain_resp, learner_id)
         text, _ = self._call(INSTRUCTOR_SYSTEM_PROMPT, payload)
-        return text
+        return text if text is not None else _rule_based_instructor_text(explain_resp, learner_id)
 
     def narrate(
         self,
@@ -478,19 +555,27 @@ class LLMNarrator:
                 pl = _build_reco_learner_payload(explain_resp, learner_id)
                 learner_text, tok = self._call(RECO_LEARNER_SYSTEM_PROMPT, pl)
                 total_tokens += tok
+                if learner_text is None:
+                    learner_text = _rule_based_reco_learner_text(explain_resp)
             if audience in ("instructor", "both"):
                 pi = _build_reco_instructor_payload(explain_resp, learner_id)
                 instructor_text, tok = self._call(RECO_INSTRUCTOR_SYSTEM_PROMPT, pi)
                 total_tokens += tok
+                if instructor_text is None:
+                    instructor_text = _rule_based_reco_instructor_text(explain_resp, learner_id)
         else:
             if audience in ("learner", "both"):
                 pl = _build_learner_payload(explain_resp, learner_id)
                 learner_text, tok = self._call(LEARNER_SYSTEM_PROMPT, pl)
                 total_tokens += tok
+                if learner_text is None:
+                    learner_text = _rule_based_learner_text(explain_resp)
             if audience in ("instructor", "both"):
                 pi = _build_instructor_payload(explain_resp, learner_id)
                 instructor_text, tok = self._call(INSTRUCTOR_SYSTEM_PROMPT, pi)
                 total_tokens += tok
+                if instructor_text is None:
+                    instructor_text = _rule_based_instructor_text(explain_resp, learner_id)
 
         return NarrationResult(
             learner_text=learner_text,

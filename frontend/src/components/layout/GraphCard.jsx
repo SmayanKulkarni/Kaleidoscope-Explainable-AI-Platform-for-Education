@@ -1,6 +1,6 @@
 import { Suspense, useState } from 'react';
 
-export default function GraphCard({ title, legend, children, height = 420 }) {
+export default function GraphCard({ title, legend, children, height = 420, action }) {
   const [fullscreen, setFullscreen] = useState(false);
 
   return (
@@ -18,6 +18,7 @@ export default function GraphCard({ title, legend, children, height = 420 }) {
               ))}
             </div>
           )}
+          {action}
           <button
             onClick={() => setFullscreen((v) => !v)}
             title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}

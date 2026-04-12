@@ -1,14 +1,30 @@
 import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getStudentData } from '../services/xaiService';
 import { useAuth } from '../context/AuthContext';
+import { getInstructorStudents } from '../api/recommend';
 
 export default function ActionPlan() {
   const { user } = useAuth();
+  const isInstructor = user?.role === 'instructor';
   const [data, setData] = useState(null);
+  const [selectedStudentId, setSelectedStudentId] = useState(null);
+
+  const { data: roster } = useQuery({
+    queryKey: ['instructor-students'],
+    queryFn: getInstructorStudents,
+    enabled: isInstructor,
+    staleTime: 60_000,
+  });
+  const students = roster?.students ?? [];
 
   useEffect(() => { getStudentData().then(setData); }, []);
+
+  const selectedStudent = isInstructor && selectedStudentId
+    ? students.find(s => s.learner_id === selectedStudentId)
+    : null;
 
   if (!data) return <div className="min-h-screen bg-surface flex justify-center items-center">Loading Action Plan...</div>;
 
@@ -24,10 +40,34 @@ export default function ActionPlan() {
               <span className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg">assignment_turned_in</span>
               <span className="font-label text-sm uppercase tracking-widest text-primary font-bold">Guided Path</span>
             </div>
-            <h1 className="text-4xl font-headline font-extrabold tracking-tight text-on-surface mb-4">Your Action Plan</h1>
+            <h1 className="text-4xl font-headline font-extrabold tracking-tight text-on-surface mb-4">
+              {isInstructor ? 'Student Action Plan' : 'Your Action Plan'}
+            </h1>
             <p className="text-xl text-slate-500 font-body leading-relaxed max-w-2xl">
-              Based on the AI's analysis, these targeted actions have the highest probability of improving your trajectory.
+              Based on the AI's analysis, these targeted actions have the highest probability of improving the learning trajectory.
             </p>
+            {isInstructor && (
+              <div className="mt-6 bg-surface-container-low rounded-xl border border-outline-variant/10 p-4 flex items-center gap-4">
+                <label className="font-label text-xs uppercase tracking-widest text-slate-500 shrink-0">Viewing student:</label>
+                <select
+                  value={selectedStudentId ?? ''}
+                  onChange={e => setSelectedStudentId(e.target.value || null)}
+                  className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-full sm:w-72 focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">— Select a student —</option>
+                  {students.map(s => (
+                    <option key={s.learner_id} value={s.learner_id}>
+                      {s.display_name} ({((s.dropout_risk_score ?? 0)*100).toFixed(0)}% risk)
+                    </option>
+                  ))}
+                </select>
+                {selectedStudent && (
+                  <span className="text-xs font-label text-slate-500">
+                    Module: {selectedStudent.current_module ?? '—'} · Week {selectedStudent.features?.current_week_in_course ?? '?'}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-6">

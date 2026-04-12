@@ -562,3 +562,57 @@ POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_
 - **Verification:** `python -c "import ast; ast.parse(open(r'...main.py', encoding='utf-8').read()); print('OK')"` → `OK - no syntax errors`
 
 - **Dependencies/Impacts:** All backend endpoints are now importable. `reference_pool` is preserved in both ranker explainers (KNN prototype Feature 5 now correctly uses the precomputed CSV pool). `causal_annotator` is wired into ranker explainers after background init completes without recreating them.
+
+---
+## Session — Phases 3–9 Frontend Rewrites
+
+**Phases completed:**
+- Phase 3: InstructorDashboard — full rewrite; removed mock data; fetches real roster via `getInstructorStudents`; shows per-student risk bars, trajectory icons, search/sort, Analyse button → `/xai/instructor`.
+- Phase 4: InstructorView — full rewrite; student panel selector (from roster); per-student ranked interventions via `getInstructorRecoForStudent`; inline explanation with anchor rule + LLM narrative via `explainInstructorRecoForStudent`; preselects from router state `learner_id`.
+- Phase 5: WhatIfExplorer — full rewrite; instructor gets student dropdown (loads base features from roster); sliders from `MUTABLE_FEATURES`; Run Simulation button → `whatif` or `instructorWhatIfForStudent`; shows baseline vs projected risk + SHAP feature impact breakdown.
+- Phase 6: ActionPlan — added instructor mode; student selector dropdown; `selectedStudent` context banner.
+- Phase 7: Compare page — added LLM narration; "Explain Graph" button in `GraphCard` action slot; narration panel with summary, key_insights, strongest_drivers. `GraphCard` updated to accept `action` prop.
+- Phase 9: AdminDashboard — added Enrollment Management section; lists all enrollments with delete; form to add enrollment (learner_id + instructor dropdown + course_id); wired to `getAdminEnrollments`, `getAdminInstructors`, `addAdminEnrollment`, `deleteAdminEnrollment`.
+
+**Files modified:**
+- `frontend/src/pages/InstructorDashboard.jsx`
+- `frontend/src/pages/InstructorView.jsx`
+- `frontend/src/pages/WhatIfExplorer.jsx`
+- `frontend/src/pages/ActionPlan.jsx`
+- `frontend/src/pages/ComparePage.jsx`
+- `frontend/src/pages/AdminDashboard.jsx`
+- `frontend/src/components/layout/GraphCard.jsx`
+
+**Remaining:** Phase 8 (LLM narrator fallback audit) still in progress.
+
+---
+## Phase 8 — LLM Narrator Fallback Systematic Fix
+
+**Problem:** When GROQ_API_KEY is absent or API calls fail, narration either:
+- Leaked ugly `"[Narration unavailable — GROQ_API_KEY not configured]"` / `"[Narration error: ...]"` strings into API responses (visible in UI)
+- Produced useless fallbacks ignoring actual XAI data (`/fairness/explain`)
+- Produced missing `narratives` field entirely (`/instructor/recommend/.../explain`)
+- Had weak exception-handler summaries (`/causal/explain`)
+
+**Root cause:** `LLMNarrator._call()` returned error strings instead of `None`, and callers had no rule-based fallback path.
+
+**Fixes applied:**
+
+### `backend/app/narrator/llm_narrator.py`
+1. `_call()` now returns `(None, 0)` on unavailable client or API error (was: error string).
+2. `(response.choices[0].message.content or "").strip() or None` — guards empty/None Groq content.
+3. Added four rule-based fallback generators (module-level functions):
+   - `_rule_based_learner_text(explain_resp)` — uses risk_score, shap_values, ranked_actions
+   - `_rule_based_instructor_text(explain_resp, learner_id)` — uses risk, SHAP, anchor_rule, trust_score, ranked_actions
+   - `_rule_based_reco_learner_text(explain_resp)` — uses item_id, score, shap_values, anchor_rule
+   - `_rule_based_reco_instructor_text(explain_resp, learner_id)` — uses score, student risk, intervention_type
+4. `narrate_learner/narrate_instructor/narrate()` now call rule-based fallback when `_call` returns None.
+   All paths guaranteed to return meaningful text regardless of LLM availability.
+
+### `backend/app/main.py`
+1. `/fairness/explain` fallback now uses actual `flagged_disparities`, `group_scores`, `overall_fair` from the report payload — no more "unavailable" message.
+2. `/causal/explain` exception-handler fallback: improved summary with actual node/edge counts and strongest driver names, source changed to `"rule_based"`.
+3. `/instructor/recommend/{learner_id}/explain`: guard changed from `available` check to plain `not None` check — `narrate_instructor` now always produces text via rule-based fallback.
+4. `student_study_tips` and `compare/narrate` direct Groq calls: guarded `.content` with `or ""` to silence Pyright lint.
+
+**Result:** All LLM narration endpoints now return meaningful, data-grounded text at all times.

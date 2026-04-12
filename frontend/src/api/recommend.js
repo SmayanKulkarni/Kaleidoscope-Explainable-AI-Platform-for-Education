@@ -33,3 +33,39 @@ export const postInstructorRecommend = ({ instructor_id, items, top_k = 5, inclu
 
 export const postInstructorExplain = ({ instructor_id, features, item_id = '' }) =>
   recommendInstructorExplain(instructor_id, features, item_id);
+
+// ── Instructor roster + per-student endpoints ──────────────────────────────
+
+export const getInstructorStudents = () =>
+  client.get('/instructor/students').then((r) => r.data);
+
+export const getInstructorRecoForStudent = (learner_id) =>
+  client.post(`/instructor/recommend/${learner_id}`, {}).then((r) => r.data);
+
+export const explainInstructorRecoForStudent = (learner_id, features, item_id) =>
+  client.post(`/instructor/recommend/${learner_id}/explain`, { features, item_id }).then((r) => r.data);
+
+export const instructorWhatIfForStudent = (learner_id, overrides) =>
+  client.post(`/instructor/whatif/${learner_id}`, { overrides }).then((r) => r.data);
+
+// ── Student study-tips + compare narrate ──────────────────────────────────
+
+export const getStudyTips = (payload) =>
+  client.post('/student/study-tips', payload).then((r) => r.data);
+
+export const compareNarrate = (payload) =>
+  client.post('/compare/narrate', payload).then((r) => r.data);
+
+// ── Admin enrollment endpoints ─────────────────────────────────────────────
+
+export const getAdminInstructors = () =>
+  client.get('/admin/instructors').then((r) => r.data);
+
+export const getAdminEnrollments = () =>
+  client.get('/admin/enrollments').then((r) => r.data);
+
+export const addAdminEnrollment = (payload) =>
+  client.post('/admin/enrollments', payload).then((r) => r.data);
+
+export const deleteAdminEnrollment = (id) =>
+  client.delete(`/admin/enrollments/${id}`).then((r) => r.data);

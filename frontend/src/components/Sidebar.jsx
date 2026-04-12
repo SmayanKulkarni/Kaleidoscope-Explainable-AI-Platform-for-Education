@@ -1,12 +1,15 @@
+import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { recommendHealth } from '../api/recommend';
+import AIHelpModal from './AIHelpModal';
 
 export default function Sidebar() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [aiModalOpen, setAiModalOpen] = useState(false);
 
   const { data: healthData } = useQuery({
     queryKey: ['recommend-health'],
@@ -88,7 +91,10 @@ export default function Sidebar() {
       </div>
 
       <div className="px-6 py-4">
-        <button className="w-full py-3 bg-gradient-to-r from-primary to-primary-container text-on-primary rounded-xl font-bold text-sm shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2">
+        <button
+          onClick={() => setAiModalOpen(true)}
+          className="w-full py-3 bg-gradient-to-r from-primary to-primary-container text-on-primary rounded-xl font-bold text-sm shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2"
+        >
           {user.role === 'student' ? <span className="material-symbols-outlined text-sm">bolt</span> : null}
           Get AI Help
         </button>
@@ -102,6 +108,11 @@ export default function Sidebar() {
           <span className="material-symbols-outlined">help_outline</span> Support
         </a>
       </div>
+      <AIHelpModal
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        explanation={null}
+      />
     </aside>
   );
 }

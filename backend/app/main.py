@@ -68,7 +68,7 @@ from backend.app.mlops.drift_monitor import DriftMonitor
 from backend.app.mlops.prediction_logger import PredictionLogger
 from backend.app.model.lstm_trainer import DropoutLSTM, build_sequences
 from backend.app.prescriptor.action_ranker import ActionRanker
-from backend.app.auth.auth import get_current_active_student, get_current_user_optional
+from backend.app.auth.auth import get_current_active_student, get_current_user, get_current_user_optional
 from backend.app.auth.database import init_db as init_auth_db
 from backend.app.auth.models import User
 from backend.app.auth.router import router as auth_router
@@ -160,14 +160,87 @@ _DEMO_USERS = [
     {"username": "demo_instructor", "password": "instructor123", "email": "demo_instructor@xai.local", "role": "instructor", "learner_id": None},
 ]
 
+# 6 demo roster students enrolled under demo_instructor (diverse risk profiles)
+_DEMO_ROSTER = [
+    {
+        "username": "roster_alice",   "password": "roster123", "email": "alice@xai.local",
+        "full_name": "Alice Chen",    "learner_id": "learner_r01", "course_id": "CCC",
+        "module": "CCC", "presentation": "2014J",
+        "features": dict(login_frequency_weekly=6, avg_session_duration_min=72, forum_posts_count=8,
+                         video_completion_rate=0.92, quiz_avg_score=84, quiz_completion_rate=0.9,
+                         assignment_submission_rate=0.95, days_since_last_activity=1,
+                         prior_course_completions=3, current_week_in_course=6,
+                         missed_deadlines_count=0, help_requests_count=2),
+        "risk": 0.12, "trajectory": "improving",
+    },
+    {
+        "username": "roster_bob",     "password": "roster123", "email": "bob@xai.local",
+        "full_name": "Bob Martinez",  "learner_id": "learner_r02", "course_id": "CCC",
+        "module": "CCC", "presentation": "2014B",
+        "features": dict(login_frequency_weekly=3, avg_session_duration_min=45, forum_posts_count=2,
+                         video_completion_rate=0.6, quiz_avg_score=62, quiz_completion_rate=0.65,
+                         assignment_submission_rate=0.7, days_since_last_activity=6,
+                         prior_course_completions=1, current_week_in_course=6,
+                         missed_deadlines_count=2, help_requests_count=3),
+        "risk": 0.41, "trajectory": "stable",
+    },
+    {
+        "username": "roster_carla",   "password": "roster123", "email": "carla@xai.local",
+        "full_name": "Carla Singh",   "learner_id": "learner_r03", "course_id": "CCC",
+        "module": "CCC", "presentation": "2013J",
+        "features": dict(login_frequency_weekly=1, avg_session_duration_min=20, forum_posts_count=0,
+                         video_completion_rate=0.3, quiz_avg_score=42, quiz_completion_rate=0.35,
+                         assignment_submission_rate=0.4, days_since_last_activity=18,
+                         prior_course_completions=0, current_week_in_course=8,
+                         missed_deadlines_count=5, help_requests_count=0),
+        "risk": 0.83, "trajectory": "deteriorating",
+    },
+    {
+        "username": "roster_david",   "password": "roster123", "email": "david@xai.local",
+        "full_name": "David Okafor",  "learner_id": "learner_r04", "course_id": "CCC",
+        "module": "CCC", "presentation": "2014J",
+        "features": dict(login_frequency_weekly=5, avg_session_duration_min=55, forum_posts_count=5,
+                         video_completion_rate=0.78, quiz_avg_score=74, quiz_completion_rate=0.8,
+                         assignment_submission_rate=0.85, days_since_last_activity=3,
+                         prior_course_completions=2, current_week_in_course=4,
+                         missed_deadlines_count=1, help_requests_count=1),
+        "risk": 0.22, "trajectory": "stable",
+    },
+    {
+        "username": "roster_elena",   "password": "roster123", "email": "elena@xai.local",
+        "full_name": "Elena Kowalski","learner_id": "learner_r05", "course_id": "CCC",
+        "module": "CCC", "presentation": "2013B",
+        "features": dict(login_frequency_weekly=2, avg_session_duration_min=30, forum_posts_count=1,
+                         video_completion_rate=0.45, quiz_avg_score=53, quiz_completion_rate=0.5,
+                         assignment_submission_rate=0.55, days_since_last_activity=12,
+                         prior_course_completions=0, current_week_in_course=10,
+                         missed_deadlines_count=4, help_requests_count=2),
+        "risk": 0.67, "trajectory": "at_risk_stable",
+    },
+    {
+        "username": "roster_felix",   "password": "roster123", "email": "felix@xai.local",
+        "full_name": "Felix Andersen","learner_id": "learner_r06", "course_id": "CCC",
+        "module": "CCC", "presentation": "2014B",
+        "features": dict(login_frequency_weekly=4, avg_session_duration_min=60, forum_posts_count=4,
+                         video_completion_rate=0.7, quiz_avg_score=70, quiz_completion_rate=0.72,
+                         assignment_submission_rate=0.78, days_since_last_activity=4,
+                         prior_course_completions=1, current_week_in_course=6,
+                         missed_deadlines_count=1, help_requests_count=2),
+        "risk": 0.33, "trajectory": "improving",
+    },
+]
+
 
 def _seed_demo_users() -> None:
     from backend.app.auth.auth import hash_password
     from backend.app.auth.database import get_db
-    from backend.app.auth.models import User, LearnerProfile
+    from backend.app.auth.models import (
+        User, LearnerProfile, InstructorProfile, CourseEnrollment, StudentSnapshot
+    )
 
     db = next(get_db())
     try:
+        # ── Core demo accounts (admin / student / instructor) ──────────────────
         for spec in _DEMO_USERS:
             user = db.query(User).filter(User.username == spec["username"]).first()
             if user is None:
@@ -182,13 +255,99 @@ def _seed_demo_users() -> None:
                 db.add(user)
                 db.flush()
                 if spec["role"] == "student" and spec["learner_id"]:
-                    db.add(LearnerProfile(user_id=user.id, learner_id=spec["learner_id"]))
+                    lp = LearnerProfile(user_id=user.id, learner_id=spec["learner_id"],
+                                        course_id="CCC", current_week=6)
+                    db.add(lp)
+                    db.flush()
+                    db.add(StudentSnapshot(
+                        learner_id=spec["learner_id"], display_name=user.full_name,
+                        current_module="CCC", current_presentation="2014J",
+                        dropout_risk_score=0.38, risk_trajectory="stable",
+                    ))
+                if spec["role"] == "instructor":
+                    db.add(InstructorProfile(
+                        user_id=user.id, department="Humanities", bio="Demo instructor"
+                    ))
                 log.info("Seeded demo user: %s (%s)", spec["username"], spec["role"])
             else:
                 user.hashed_password = hash_password(spec["password"])
                 user.is_active = True
                 log.info("Updated demo user password: %s", spec["username"])
+
+        db.flush()
+
+        # ── Ensure instructor profile exists ───────────────────────────────────
+        instr_profile = None
+        instr_user = db.query(User).filter(User.username == "demo_instructor").first()
+        if instr_user:
+            instr_profile = db.query(InstructorProfile).filter(
+                InstructorProfile.user_id == instr_user.id
+            ).first()
+            if instr_profile is None:
+                instr_profile = InstructorProfile(
+                    user_id=instr_user.id, department="Humanities", bio="Demo instructor"
+                )
+                db.add(instr_profile)
+                db.flush()
+
+        # ── Roster students enrolled under demo_instructor ─────────────────────
+        for spec in _DEMO_ROSTER:
+            user = db.query(User).filter(User.username == spec["username"]).first()
+            if user is None:
+                user = User(
+                    username=spec["username"],
+                    email=spec["email"],
+                    full_name=spec["full_name"],
+                    hashed_password=hash_password(spec["password"]),
+                    role="student",
+                    is_active=True,
+                )
+                db.add(user)
+                db.flush()
+
+            lp = db.query(LearnerProfile).filter(
+                LearnerProfile.learner_id == spec["learner_id"]
+            ).first()
+            if lp is None:
+                lp = LearnerProfile(
+                    user_id=user.id,
+                    learner_id=spec["learner_id"],
+                    course_id=spec["course_id"],
+                    current_week=spec["features"]["current_week_in_course"],
+                )
+                db.add(lp)
+                db.flush()
+
+            # Upsert snapshot
+            snap = db.query(StudentSnapshot).filter(
+                StudentSnapshot.learner_id == spec["learner_id"]
+            ).first()
+            if snap is None:
+                snap = StudentSnapshot(learner_id=spec["learner_id"])
+                db.add(snap)
+            snap.display_name        = spec["full_name"]
+            snap.current_module      = spec["module"]
+            snap.current_presentation = spec["presentation"]
+            snap.dropout_risk_score  = spec["risk"]
+            snap.risk_trajectory     = spec["trajectory"]
+            for k, v in spec["features"].items():
+                setattr(snap, k, v)
+
+            # Enroll under demo_instructor if not already enrolled
+            if instr_user and instr_profile:
+                existing = db.query(CourseEnrollment).filter(
+                    CourseEnrollment.learner_profile_id == lp.id,
+                    CourseEnrollment.instructor_profile_id == instr_profile.id,
+                ).first()
+                if existing is None:
+                    db.add(CourseEnrollment(
+                        learner_profile_id=lp.id,
+                        instructor_profile_id=instr_profile.id,
+                        course_id=spec["course_id"],
+                    ))
+
         db.commit()
+        log.info("Demo seeder complete — %d roster students enrolled", len(_DEMO_ROSTER))
     except Exception as e:
         db.rollback()
         log.warning("Demo user seeding failed: %s", e)
@@ -1894,11 +2053,20 @@ def causal_explain():
                 "direction": n.get("effect_direction", "neutral"),
                 "explanation": f"{n['label']} has a causal effect (ATE={n.get('ate', 0):.4f}) on dropout risk.",
             })
+        top_driver_names = [n["label"] for n in strongest[:3]]
         return {
-            "summary": f"Causal graph with {len(nodes)} features and {len(edges)} edges. LLM narration unavailable.",
-            "key_insights": [f"{len(causal_nodes)} features show significant causal effects."],
+            "summary": (
+                f"This causal graph models {len(nodes)} features across {len(edges)} directed edges. "
+                f"{len(causal_nodes)} features show statistically significant causal effects on dropout risk. "
+                f"Strongest drivers: {', '.join(top_driver_names) or 'none identified'}."
+            ),
+            "key_insights": [
+                f"{len(causal_nodes)} of {len(nodes)} features have significant causal effects.",
+                "Engagement metrics causally influence both performance and risk signals.",
+                "Performance metrics directly affect dropout risk.",
+            ],
             "strongest_drivers": drivers,
-            "source": "fallback_error",
+            "source": "rule_based",
         }
 
 
@@ -1957,12 +2125,24 @@ def fairness_explain(req: FairnessExplainRequest):
     Returns { methodology, findings, verdict, action_items }.
     """
     if state.llm_narrator is None or not state.llm_narrator.available:
+        _report    = req.report
+        _flagged   = _report.get("flagged_disparities", [])
+        _n_flagged = len(_flagged)
+        _gs        = _report.get("group_scores", {})
+        _overall   = _report.get("overall_fair", True)
+        _findings_parts = []
+        for feat, groups in list(_gs.items())[:2]:
+            for grp, sc in list(groups.items())[:3]:
+                _findings_parts.append(f"{feat}[{grp}]: {sc:.3f}")
+        _findings  = "; ".join(_findings_parts) if _findings_parts else "No demographic group data available."
+        _verdict   = "No significant disparities detected across groups." if _overall else f"{_n_flagged} group(s) show disparity above threshold."
+        _actions   = [f"Review group '{d['feature']}[{d['group']}]' — deviation {d.get('deviation_pct', 0):+.1f}%." for d in _flagged[:3]] if _flagged else ["No disparities detected — continue monitoring regularly."]
         return {
             "methodology":  "Fairness check compares mean recommendation scores across demographic groups and flags groups deviating more than the threshold from the overall mean.",
-            "findings":     "LLM narration unavailable (GROQ_API_KEY not set). See raw group_scores and flagged_disparities in the audit report.",
-            "verdict":      "Unable to generate plain-language verdict without LLM access.",
-            "action_items": ["Set GROQ_API_KEY environment variable to enable narration."],
-            "source":       "fallback",
+            "findings":     _findings,
+            "verdict":      _verdict,
+            "action_items": _actions,
+            "source":       "rule_based",
         }
 
     report    = req.report
@@ -2342,6 +2522,469 @@ def recommend_instructor_whatif(req: InstructorRecoWhatIfRequest):
         overrides=req.overrides,
     )
     return {"instructor_id": req.instructor_id, **result.to_dict()}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Instructor roster + per-student recommendation endpoints
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/instructor/students")
+def instructor_students(current_user=Depends(get_current_user)):
+    """
+    Return enrolled students for the authenticated instructor with their
+    latest snapshot features + live GBM risk score.
+    """
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import (
+        User, InstructorProfile, CourseEnrollment, LearnerProfile, StudentSnapshot
+    )
+    db = next(get_db())
+    try:
+        if current_user.role not in ("instructor", "admin"):
+            raise HTTPException(403, "Instructor or admin access required")
+
+        # Admin sees all snapshots; instructor sees only their enrolled students
+        if current_user.role == "admin":
+            snaps = db.query(StudentSnapshot).all()
+        else:
+            ip = db.query(InstructorProfile).filter(
+                InstructorProfile.user_id == current_user.id
+            ).first()
+            if ip is None:
+                return {"students": []}
+            enrollments = db.query(CourseEnrollment).filter(
+                CourseEnrollment.instructor_profile_id == ip.id
+            ).all()
+            learner_profile_ids = [e.learner_profile_id for e in enrollments]
+            learner_ids = [
+                lp.learner_id for lp in
+                db.query(LearnerProfile).filter(
+                    LearnerProfile.id.in_(learner_profile_ids)
+                ).all()
+            ]
+            snaps = db.query(StudentSnapshot).filter(
+                StudentSnapshot.learner_id.in_(learner_ids)
+            ).all()
+
+        result = []
+        for snap in snaps:
+            fd = snap.to_features_dict()
+            live_risk = snap.dropout_risk_score  # use cached value; avoids heavy model call
+            if state.gbm_model is not None:
+                try:
+                    import numpy as _np
+                    _X = _np.array([[fd.get(n, 0.0) for n in state.feature_names[:len(fd)]]])
+                    live_risk = round(float(state.gbm_model.predict_proba(_X)[0][1]), 4)
+                    # Update cached value in place
+                    snap.dropout_risk_score = live_risk
+                except Exception:
+                    pass
+            result.append({
+                "learner_id":       snap.learner_id,
+                "display_name":     snap.display_name or snap.learner_id,
+                "dropout_risk_score": live_risk,
+                "risk_label":       _risk_label(live_risk) if live_risk is not None else "Unknown",
+                "risk_trajectory":  snap.risk_trajectory,
+                "current_module":   snap.current_module,
+                "current_presentation": snap.current_presentation,
+                "features":         fd,
+            })
+        db.commit()
+        return {"students": result}
+    finally:
+        db.close()
+
+
+@app.post("/instructor/recommend/{learner_id}")
+def instructor_recommend_for_student(learner_id: str, current_user=Depends(get_current_user)):
+    """
+    Run the instructor ranker for a specific enrolled student.
+    Returns ranked (module, presentation, intervention) recommendations.
+    """
+    _require_instructor_ranker()
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import StudentSnapshot, InstructorProfile
+    db = next(get_db())
+    try:
+        snap = db.query(StudentSnapshot).filter(
+            StudentSnapshot.learner_id == learner_id
+        ).first()
+        if snap is None:
+            raise HTTPException(404, f"No snapshot for learner_id={learner_id!r}")
+
+        ip = db.query(InstructorProfile).filter(
+            InstructorProfile.user_id == current_user.id
+        ).first()
+        instr_feats = {
+            "instructor_archetype":       "Socratic Guide",
+            "instructor_department":      getattr(ip, "department", "Humanities") if ip else "Humanities",
+            "instructor_teaching_style":  "socratic",
+            "instructor_experience_years": 5,
+            "instructor_avg_cohort_size": 30,
+            "instructor_intervention_intensity": 0.6,
+            "instructor_past_success_rate": 0.7,
+            "instructor_confidence_score": 0.75,
+        }
+        student_feats = {
+            "student_id": learner_id,
+            "learner_id": learner_id,
+            "student_current_module":       snap.current_module or "CCC",
+            "student_current_presentation": snap.current_presentation or "2014J",
+            "student_dropout_risk_score":   snap.dropout_risk_score or 0.5,
+            "student_risk_trajectory":      snap.risk_trajectory or "stable",
+            "student_learning_momentum":    snap.video_completion_rate,
+            "student_quiz_avg_score":       snap.quiz_avg_score,
+            "student_assignment_submission_rate": snap.assignment_submission_rate,
+            "student_missed_deadlines":     snap.missed_deadlines_count,
+            "student_days_inactive":        snap.days_since_last_activity,
+            "student_week_in_course":       snap.current_week_in_course,
+            "student_vs_cohort_quiz_delta": snap.quiz_avg_score - 65.0,
+            "student_peer_collab_readiness": snap.forum_posts_count / 10.0,
+        }
+        merged = {**instr_feats, **student_feats,
+                  "cohort_signal_score": 0.5, "cohort_avg_quiz_score": 65.0,
+                  "cohort_avg_dropout_rate": 0.3, "cohort_size": 30,
+                  "cohort_engagement_percentile": 0.5}
+
+        scored = state.instructor_ranker_explainer.score_items(
+            items=[merged], top_k=5, include_shap=True
+        )
+        return {
+            "learner_id": learner_id,
+            "student_name": snap.display_name or learner_id,
+            "recommendations": [s.to_dict() for s in scored],
+        }
+    finally:
+        db.close()
+
+
+@app.post("/instructor/recommend/{learner_id}/explain")
+def instructor_recommend_explain_for_student(
+    learner_id: str,
+    req: dict,
+    current_user=Depends(get_current_user),
+):
+    """Full XAI explanation for a specific instructor recommendation for a student."""
+    _require_instructor_ranker()
+    item_id  = req.get("item_id", "")
+    features = req.get("features", {})
+    explanation = state.instructor_ranker_explainer.explain(
+        features=features, item_id=item_id
+    )
+    resp = explanation.to_dict()
+    if state.llm_narrator is not None:
+        try:
+            narr = state.llm_narrator.narrate_instructor(resp, learner_id=learner_id)
+            resp["narratives"] = {"instructor": narr}
+        except Exception as _e:
+            log.warning("LLM narration failed for instructor reco explain: %s", _e)
+    return {"learner_id": learner_id, **resp}
+
+
+@app.post("/instructor/whatif/{learner_id}")
+def instructor_whatif_for_student(
+    learner_id: str,
+    req: dict,
+    current_user=Depends(get_current_user),
+):
+    """
+    What-if for a student under instructor view: apply feature overrides
+    to a student's snapshot and return the new predicted risk score.
+    """
+    _require_model()
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import StudentSnapshot
+    db = next(get_db())
+    try:
+        snap = db.query(StudentSnapshot).filter(
+            StudentSnapshot.learner_id == learner_id
+        ).first()
+        if snap is None:
+            raise HTTPException(404, f"No snapshot for learner_id={learner_id!r}")
+        base_fd = snap.to_features_dict()
+        overrides = req.get("overrides", {})
+        merged_fd = {**base_fd, **overrides}
+        import numpy as _np
+        _X = _np.array([[merged_fd.get(n, 0.0) for n in state.feature_names]])
+        new_risk = round(float(state.gbm_model.predict_proba(_X)[0][1]), 4)
+        delta = round(new_risk - (snap.dropout_risk_score or 0.0), 4)
+        shap_result = state.shap_explainer.explain(merged_fd)
+        return {
+            "learner_id":    learner_id,
+            "base_risk":     snap.dropout_risk_score,
+            "new_risk":      new_risk,
+            "risk_delta":    delta,
+            "risk_label":    _risk_label(new_risk),
+            "top_features":  list(shap_result.top_features[:5]),
+            "shap_values":   {k: round(v, 5) for k, v in shap_result.shap_values.items()},
+        }
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Student study-tips endpoint (LLM-grounded in SHAP explanation)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_STUDY_TIPS_PROMPT = """You are an educational AI assistant helping a student understand their dropout risk.
+Given their XAI explanation, provide exactly 4 specific, actionable study tips.
+Grounded in the features below — do NOT invent features not listed.
+
+Risk score: {risk_score} ({risk_label})
+Top risk factors: {top_features}
+Anchor rule: {anchor_rule}
+SHAP summary (feature → impact): {shap_summary}
+
+Return ONLY valid JSON: {{"summary": "one sentence", "tips": ["tip1", "tip2", "tip3", "tip4"]}}
+"""
+
+
+@app.post("/student/study-tips")
+def student_study_tips(req: dict, current_user=Depends(get_current_user)):
+    """
+    LLM-generated study tips grounded in the student's SHAP explanation.
+    """
+    risk_score   = req.get("risk_score", 0.5)
+    risk_label   = req.get("risk_label", "Medium")
+    top_features = req.get("top_features", [])
+    shap_values  = req.get("shap_values", {})
+    anchor_rule  = req.get("anchor_rule", {})
+
+    shap_summary = "; ".join(
+        f"{k}={v:+.3f}" for k, v in sorted(shap_values.items(), key=lambda x: -abs(x[1]))[:6]
+    ) if shap_values else "N/A"
+    anchor_text = anchor_rule.get("rule", "N/A") if isinstance(anchor_rule, dict) else str(anchor_rule)
+
+    # Rule-based fallback (always available)
+    fallback_tips = []
+    for feat in (top_features or list(shap_values.keys()))[:4]:
+        sv = shap_values.get(feat, 0)
+        if sv > 0:
+            fallback_tips.append(f"Focus on improving '{feat.replace('_', ' ')}' — it is currently increasing your dropout risk.")
+        else:
+            fallback_tips.append(f"Keep up the good work on '{feat.replace('_', ' ')}' — it is helping reduce your risk.")
+    while len(fallback_tips) < 4:
+        fallback_tips.append("Log in regularly and engage with course materials daily.")
+
+    if state.llm_narrator is None or not state.llm_narrator.available:
+        return {
+            "summary": f"Your current dropout risk is {risk_label} ({risk_score:.0%}). Here are personalised tips based on your model explanation.",
+            "tips": fallback_tips,
+            "source": "rule_based",
+        }
+
+    prompt = _STUDY_TIPS_PROMPT.format(
+        risk_score=f"{risk_score:.0%}", risk_label=risk_label,
+        top_features=", ".join(top_features[:5]),
+        anchor_rule=anchor_text, shap_summary=shap_summary,
+    )
+    try:
+        import json as _json
+        from groq import Groq as _Groq
+        _client = _Groq(api_key=state.llm_narrator.api_key)
+        _resp = _client.chat.completions.create(
+            model=state.llm_narrator.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4, max_tokens=512,
+        )
+        raw = (_resp.choices[0].message.content or "").strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = _json.loads(raw)
+        return {**parsed, "source": "llm"}
+    except Exception as _e:
+        log.warning("study-tips LLM call failed: %s", _e)
+        return {
+            "summary": f"Your dropout risk is {risk_label} ({risk_score:.0%}).",
+            "tips": fallback_tips,
+            "source": "rule_based",
+        }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Compare narration endpoint — LLM explains GBM vs LSTM bipartite graph
+# ──────────────────────────────────────────────────────────────────────────────
+
+_COMPARE_NARRATE_PROMPT = """You are an XAI system explaining a model comparison to a {audience}.
+GBM (gradient boosting) risk score: {gbm_score} ({gbm_label})
+LSTM (sequential/temporal) risk score: {lstm_score} ({lstm_label})
+Disagreement flag: {disagreement}
+GBM top features: {gbm_top}
+
+Explain in plain language:
+1. What each model captures (GBM = tabular patterns; LSTM = temporal trends over weeks)
+2. Why they agree or disagree on this student
+3. What the disagreement (if any) means practically for the {audience}
+4. One concrete recommendation based on this comparison
+
+Return ONLY valid JSON: {{"summary": "...", "gbm_insight": "...", "lstm_insight": "...", "disagreement_meaning": "...", "recommendation": "..."}}
+"""
+
+
+@app.post("/compare/narrate")
+def compare_narrate(req: dict):
+    """LLM narration of the GBM vs LSTM bipartite comparison graph."""
+    gbm_score     = req.get("gbm_score", 0.5)
+    lstm_score    = req.get("lstm_score")
+    gbm_label     = req.get("gbm_risk_label", _risk_label(gbm_score))
+    lstm_label    = req.get("lstm_risk_label", _risk_label(lstm_score) if lstm_score else "N/A")
+    disagreement  = req.get("disagreement_flag", False)
+    gbm_top       = req.get("gbm_top3_features", [])
+    audience      = req.get("audience", "student")
+
+    fallback = {
+        "summary": f"GBM predicts {gbm_label} risk ({gbm_score:.0%})" + (
+            f", LSTM predicts {lstm_label} risk ({lstm_score:.0%})." if lstm_score else "."
+        ),
+        "gbm_insight": "The gradient boosting model uses tabular engagement and performance features.",
+        "lstm_insight": "The LSTM model tracks weekly engagement trends over time." if lstm_score else "LSTM not available.",
+        "disagreement_meaning": "The models disagree — consider both perspectives before acting." if disagreement else "Both models agree on the risk level.",
+        "recommendation": "Focus on the top risk features identified by GBM.",
+        "source": "rule_based",
+    }
+
+    if state.llm_narrator is None or not state.llm_narrator.available or lstm_score is None:
+        return fallback
+
+    prompt = _COMPARE_NARRATE_PROMPT.format(
+        audience=audience, gbm_score=f"{gbm_score:.0%}", gbm_label=gbm_label,
+        lstm_score=f"{lstm_score:.0%}", lstm_label=lstm_label,
+        disagreement=disagreement, gbm_top=", ".join(gbm_top),
+    )
+    try:
+        import json as _json
+        from groq import Groq as _Groq
+        _client = _Groq(api_key=state.llm_narrator.api_key)
+        _resp = _client.chat.completions.create(
+            model=state.llm_narrator.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4, max_tokens=600,
+        )
+        raw = (_resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = _json.loads(raw)
+        return {**parsed, "source": "llm"}
+    except Exception as _e:
+        log.warning("compare/narrate LLM call failed: %s", _e)
+        return fallback
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Admin enrollment management endpoints
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/admin/instructors")
+def admin_list_instructors(current_user=Depends(get_current_user)):
+    """List all instructors with their enrolled student count."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import User, InstructorProfile, CourseEnrollment
+    db = next(get_db())
+    try:
+        instructors = db.query(User).filter(User.role == "instructor", User.is_active == True).all()
+        result = []
+        for u in instructors:
+            ip = db.query(InstructorProfile).filter(InstructorProfile.user_id == u.id).first()
+            count = 0
+            if ip:
+                count = db.query(CourseEnrollment).filter(
+                    CourseEnrollment.instructor_profile_id == ip.id
+                ).count()
+            result.append({
+                "user_id":    u.id, "username": u.username,
+                "full_name":  u.full_name, "department": getattr(ip, "department", None),
+                "student_count": count,
+                "profile_id": ip.id if ip else None,
+            })
+        return {"instructors": result}
+    finally:
+        db.close()
+
+
+@app.get("/admin/enrollments")
+def admin_list_enrollments(current_user=Depends(get_current_user)):
+    """List all course enrollments."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import CourseEnrollment, LearnerProfile, InstructorProfile, User
+    db = next(get_db())
+    try:
+        enrollments = db.query(CourseEnrollment).all()
+        result = []
+        for e in enrollments:
+            lp = db.query(LearnerProfile).filter(LearnerProfile.id == e.learner_profile_id).first()
+            ip = db.query(InstructorProfile).filter(InstructorProfile.id == e.instructor_profile_id).first()
+            student_user = db.query(User).filter(User.id == lp.user_id).first() if lp else None
+            result.append({
+                "id": e.id, "course_id": e.course_id,
+                "learner_id": lp.learner_id if lp else None,
+                "student_name": student_user.full_name if student_user else None,
+                "instructor_profile_id": e.instructor_profile_id,
+                "enrolled_at": e.enrolled_at.isoformat() if e.enrolled_at else None,
+            })
+        return {"enrollments": result}
+    finally:
+        db.close()
+
+
+@app.post("/admin/enrollments")
+def admin_add_enrollment(req: dict, current_user=Depends(get_current_user)):
+    """Enroll a student (by learner_id) under an instructor (by profile_id) in a course."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import CourseEnrollment, LearnerProfile
+    db = next(get_db())
+    try:
+        learner_id            = req.get("learner_id")
+        instructor_profile_id = req.get("instructor_profile_id")
+        course_id             = req.get("course_id", "CCC")
+        lp = db.query(LearnerProfile).filter(LearnerProfile.learner_id == learner_id).first()
+        if lp is None:
+            raise HTTPException(404, f"learner_id={learner_id!r} not found")
+        existing = db.query(CourseEnrollment).filter(
+            CourseEnrollment.learner_profile_id == lp.id,
+            CourseEnrollment.instructor_profile_id == instructor_profile_id,
+        ).first()
+        if existing:
+            raise HTTPException(409, "Enrollment already exists")
+        e = CourseEnrollment(
+            learner_profile_id=lp.id,
+            instructor_profile_id=instructor_profile_id,
+            course_id=course_id,
+        )
+        db.add(e)
+        db.commit()
+        return {"id": e.id, "learner_id": learner_id, "course_id": course_id}
+    finally:
+        db.close()
+
+
+@app.delete("/admin/enrollments/{enrollment_id}")
+def admin_delete_enrollment(enrollment_id: str, current_user=Depends(get_current_user)):
+    """Remove a course enrollment."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import CourseEnrollment
+    db = next(get_db())
+    try:
+        e = db.query(CourseEnrollment).filter(CourseEnrollment.id == enrollment_id).first()
+        if e is None:
+            raise HTTPException(404, "Enrollment not found")
+        db.delete(e)
+        db.commit()
+        return {"deleted": enrollment_id}
+    finally:
+        db.close()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getHealth, getMlopsHealth, getMlopsMetrics, getMlopsDriftReport, triggerRetrain, triggerReload } from '../api/dropout';
-import { recommendHealth, recommendStudent, explainFairness } from '../api/recommend';
+import { recommendHealth, recommendStudent, explainFairness, getAdminEnrollments, getAdminInstructors, addAdminEnrollment, deleteAdminEnrollment } from '../api/recommend';
 import FairnessAuditPanel from '../components/panels/FairnessAuditPanel';
 import GraphCard from '../components/layout/GraphCard';
 
@@ -41,6 +41,8 @@ export default function AdminDashboard() {
   const [canaryFraction, setCanaryFraction] = useState(0.1);
   const [runFairness, setRunFairness]       = useState(false);
   const [fairnessExplanation, setFairnessExplanation] = useState(null);
+  const [enrollForm, setEnrollForm] = useState({ learner_id: '', instructor_id: '', course_id: 'COURSE-001' });
+  const [enrollError, setEnrollError] = useState(null);
 
   const { data: fairnessSample, isLoading: fairnessLoading } = useQuery({
     queryKey: ['admin-fairness-sample'],
@@ -62,6 +64,29 @@ export default function AdminDashboard() {
 
   const retrain = useMutation({ mutationFn: triggerRetrain });
   const reload = useMutation({ mutationFn: () => triggerReload(canaryFraction) });
+
+  const { data: enrollments, refetch: refetchEnrollments } = useQuery({
+    queryKey: ['admin-enrollments'],
+    queryFn: getAdminEnrollments,
+    staleTime: 30_000,
+  });
+
+  const { data: instructors } = useQuery({
+    queryKey: ['admin-instructors'],
+    queryFn: getAdminInstructors,
+    staleTime: 60_000,
+  });
+
+  const addEnrollMutation = useMutation({
+    mutationFn: addAdminEnrollment,
+    onSuccess: () => { setEnrollForm({ learner_id: '', instructor_id: '', course_id: 'COURSE-001' }); setEnrollError(null); refetchEnrollments(); },
+    onError: (e) => setEnrollError(e.response?.data?.detail ?? 'Failed to enroll'),
+  });
+
+  const removeEnrollMutation = useMutation({
+    mutationFn: deleteAdminEnrollment,
+    onSuccess: () => refetchEnrollments(),
+  });
 
   return (
     <div className="bg-surface font-body text-on-surface min-h-screen">
@@ -270,6 +295,85 @@ export default function AdminDashboard() {
                 >
                   {reload.isPending ? 'Reloading…' : 'Hot Reload'}
                 </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Enrollment Management */}
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-lg">Enrollment Management</h2>
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/5 shadow-sm overflow-hidden">
+              <div className="px-6 py-5 border-b border-outline-variant/10">
+                <h3 className="font-bold text-sm mb-4">Add Enrollment</h3>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    type="text"
+                    placeholder="Learner ID (e.g. learner_001)"
+                    value={enrollForm.learner_id}
+                    onChange={e => setEnrollForm(f => ({ ...f, learner_id: e.target.value }))}
+                    className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface flex-1 focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <select
+                    value={enrollForm.instructor_id}
+                    onChange={e => setEnrollForm(f => ({ ...f, instructor_id: e.target.value }))}
+                    className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-full sm:w-56 focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="">— Select Instructor —</option>
+                    {(instructors?.instructors ?? []).map(ins => (
+                      <option key={ins.instructor_id} value={ins.instructor_id}>{ins.display_name ?? ins.instructor_id}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Course ID"
+                    value={enrollForm.course_id}
+                    onChange={e => setEnrollForm(f => ({ ...f, course_id: e.target.value }))}
+                    className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-32 focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <button
+                    onClick={() => addEnrollMutation.mutate(enrollForm)}
+                    disabled={addEnrollMutation.isPending || !enrollForm.learner_id || !enrollForm.instructor_id}
+                    className="px-4 py-2 bg-primary text-white rounded-lg font-bold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-sm">person_add</span> Enroll
+                  </button>
+                </div>
+                {enrollError && <p className="mt-2 text-xs text-red-600 font-label">{enrollError}</p>}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-surface-container font-label text-[10px] uppercase tracking-widest text-slate-500">
+                    <tr>
+                      <th className="px-6 py-3">Learner ID</th>
+                      <th className="px-6 py-3">Instructor</th>
+                      <th className="px-6 py-3">Course</th>
+                      <th className="px-6 py-3">Enrolled At</th>
+                      <th className="px-6 py-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant/5">
+                    {(enrollments?.enrollments ?? []).map(e => (
+                      <tr key={e.id} className="hover:bg-primary/5 transition-colors">
+                        <td className="px-6 py-3 font-label text-sm font-bold">{e.learner_id}</td>
+                        <td className="px-6 py-3 font-label text-sm text-slate-600">{e.instructor_id}</td>
+                        <td className="px-6 py-3 font-label text-sm text-slate-500">{e.course_id}</td>
+                        <td className="px-6 py-3 font-label text-xs text-slate-400">{e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : '—'}</td>
+                        <td className="px-6 py-3">
+                          <button
+                            onClick={() => removeEnrollMutation.mutate(e.id)}
+                            disabled={removeEnrollMutation.isPending}
+                            className="text-red-500 hover:text-red-700 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">person_remove</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {(enrollments?.enrollments ?? []).length === 0 && (
+                      <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400 font-label text-sm">No enrollments found.</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </section>

@@ -1,11 +1,22 @@
 import { useState, useEffect } from 'react';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
+import AIHelpModal from '../components/AIHelpModal';
 import { getStudentData } from '../services/xaiService';
+import { useAuth } from '../context/AuthContext';
+import { useExplain } from '../hooks/useExplain';
+import { DEFAULT_FEATURES } from '../api/dropout';
 
 export default function StudentDashboard() {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('Prediction');
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+
+  const learner_id = user?.learner_id ?? user?.id ?? 'anonymous';
+  const { data: explanation } = useExplain({
+    features: DEFAULT_FEATURES, learner_id, model: 'gbm', audience: 'learner'
+  });
 
   useEffect(() => { getStudentData().then(setData); }, []);
 
@@ -147,13 +158,16 @@ export default function StudentDashboard() {
                 <div className="flex-1 space-y-4">
                   <div className="flex items-center gap-3">
                     <h3 className="font-headline font-extrabold text-2xl">Your AI Coach Says</h3>
-                    <span className="text-[10px] font-label bg-white/60 px-2 py-0.5 rounded text-slate-500 border border-slate-200 uppercase tracking-tighter">Narrated by Claude AI</span>
+                    <span className="text-[10px] font-label bg-primary/10 px-2 py-0.5 rounded text-primary border border-primary/20 uppercase tracking-tighter">XAI Powered</span>
                   </div>
                   <p className="text-lg text-on-surface/80 leading-relaxed font-body italic">
                     "{data.aiNarrative}"
                   </p>
                   <div className="flex gap-4 pt-2">
-                    <button className="text-sm font-bold text-primary flex items-center gap-2 group">
+                    <button
+                      onClick={() => setAiModalOpen(true)}
+                      className="text-sm font-bold text-primary flex items-center gap-2 group hover:underline"
+                    >
                       Ask for study tips <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
                     </button>
                   </div>
@@ -164,6 +178,11 @@ export default function StudentDashboard() {
 
         </div>
       </main>
+      <AIHelpModal
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        explanation={explanation}
+      />
     </div>
   );
 }

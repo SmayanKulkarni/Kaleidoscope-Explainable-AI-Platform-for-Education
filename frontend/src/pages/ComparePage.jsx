@@ -1,7 +1,9 @@
-import { lazy } from 'react';
+import { lazy, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { useCompare } from '../hooks/useCompare';
 import { DEFAULT_FEATURES } from '../api/dropout';
+import { compareNarrate } from '../api/recommend';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import RiskScoreCard from '../components/panels/RiskScoreCard';
@@ -21,9 +23,15 @@ const GRAPH_LEGEND = [
 export default function ComparePage() {
   const { user } = useAuth();
   const learner_id = user?.learner_id ?? user?.id ?? 'anonymous';
+  const [narration, setNarration] = useState(null);
 
   const { data: compareResult, isLoading, error } =
     useCompare({ features: DEFAULT_FEATURES, learner_id });
+
+  const narrateMutation = useMutation({
+    mutationFn: () => compareNarrate(compareResult),
+    onSuccess: setNarration,
+  });
 
   const gbmScore  = compareResult?.gbm_score;
   const lstmScore = compareResult?.lstm_score;
@@ -85,9 +93,54 @@ export default function ComparePage() {
             title="GBM vs LSTM Feature Bipartite Graph"
             legend={GRAPH_LEGEND}
             height={480}
+            action={
+              compareResult && (
+                <button
+                  onClick={() => narrateMutation.mutate()}
+                  disabled={narrateMutation.isPending}
+                  className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs font-label font-bold hover:bg-primary/90 transition-colors flex items-center gap-1 disabled:opacity-50"
+                >
+                  {narrateMutation.isPending
+                    ? <><div className="w-3 h-3 border border-on-primary border-t-transparent rounded-full animate-spin" /> Narrating...</>
+                    : <><span className="material-symbols-outlined text-sm">auto_awesome</span> Explain Graph</>}
+                </button>
+              )
+            }
           >
             <ModelCompareGraph compareResult={compareResult} height={480} />
           </GraphCard>
+
+          {narration && (
+            <div className="bg-surface-container-lowest rounded-2xl p-6 border border-primary/10">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="material-symbols-outlined text-primary text-lg">auto_awesome</span>
+                <h3 className="font-headline font-bold text-base">AI Graph Narration</h3>
+                <span className="ml-auto text-[10px] font-label text-slate-400">LLM grounded in bipartite data</span>
+              </div>
+              <p className="text-sm text-on-surface/80 leading-relaxed italic mb-4">"{narration.summary}"</p>
+              {narration.key_insights?.length > 0 && (
+                <ul className="space-y-2 mb-4">
+                  {narration.key_insights.map((ins, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-on-surface/70">
+                      <span className="text-primary shrink-0">▸</span> {ins}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {narration.strongest_drivers?.length > 0 && (
+                <div>
+                  <span className="font-label text-xs uppercase tracking-widest text-slate-400 block mb-2">Strongest Drivers</span>
+                  <div className="flex flex-wrap gap-2">
+                    {narration.strongest_drivers.slice(0, 4).map((d, i) => (
+                      <span key={i} className="bg-primary/5 border border-primary/10 text-primary px-3 py-1 rounded-full text-xs font-label font-bold">
+                        {d.feature ?? d}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {compareResult?.feature_disagreement?.length > 0 && (
             <div className="mt-6 bg-surface-container-lowest rounded-2xl p-6 border border-outline-variant/10">
