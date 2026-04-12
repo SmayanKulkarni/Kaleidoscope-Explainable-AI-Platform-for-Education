@@ -2969,6 +2969,7 @@ def admin_list_instructors(current_user=Depends(get_current_user)):
                 "full_name":  u.full_name, "department": getattr(ip, "department", None),
                 "student_count": count,
                 "profile_id": ip.id if ip else None,
+                "instructor_profile_id": ip.id if ip else None,
             })
         return {"instructors": result}
     finally:
@@ -2989,12 +2990,15 @@ def admin_list_enrollments(current_user=Depends(get_current_user)):
         for e in enrollments:
             lp = db.query(LearnerProfile).filter(LearnerProfile.id == e.learner_profile_id).first()
             ip = db.query(InstructorProfile).filter(InstructorProfile.id == e.instructor_profile_id).first()
+            instructor_user = db.query(User).filter(User.id == ip.user_id).first() if ip else None
             student_user = db.query(User).filter(User.id == lp.user_id).first() if lp else None
             result.append({
                 "id": e.id, "course_id": e.course_id,
                 "learner_id": lp.learner_id if lp else None,
                 "student_name": student_user.full_name if student_user else None,
                 "instructor_profile_id": e.instructor_profile_id,
+                "instructor_name": instructor_user.full_name if instructor_user else None,
+                "instructor_username": instructor_user.username if instructor_user else None,
                 "enrolled_at": e.enrolled_at.isoformat() if e.enrolled_at else None,
             })
         return {"enrollments": result}
@@ -3008,15 +3012,18 @@ def admin_add_enrollment(req: dict, current_user=Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
     from backend.app.auth.database import get_db
-    from backend.app.auth.models import CourseEnrollment, LearnerProfile
+    from backend.app.auth.models import CourseEnrollment, LearnerProfile, InstructorProfile
     db = next(get_db())
     try:
         learner_id            = req.get("learner_id")
-        instructor_profile_id = req.get("instructor_profile_id")
+        instructor_profile_id = req.get("instructor_profile_id") or req.get("instructor_id")
         course_id             = req.get("course_id", "CCC")
         lp = db.query(LearnerProfile).filter(LearnerProfile.learner_id == learner_id).first()
         if lp is None:
             raise HTTPException(404, f"learner_id={learner_id!r} not found")
+        ip = db.query(InstructorProfile).filter(InstructorProfile.id == instructor_profile_id).first()
+        if ip is None:
+            raise HTTPException(404, f"instructor_profile_id={instructor_profile_id!r} not found")
         existing = db.query(CourseEnrollment).filter(
             CourseEnrollment.learner_profile_id == lp.id,
             CourseEnrollment.instructor_profile_id == instructor_profile_id,
