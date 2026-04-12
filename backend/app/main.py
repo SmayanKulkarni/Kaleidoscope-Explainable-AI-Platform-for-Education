@@ -151,6 +151,52 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Demo user seeder — runs at every startup to ensure demo accounts exist
+# ──────────────────────────────────────────────────────────────────────────────
+
+_DEMO_USERS = [
+    {"username": "demo_admin",      "password": "admin123",      "email": "demo_admin@xai.local",      "role": "admin",      "learner_id": None},
+    {"username": "demo_student",    "password": "student123",    "email": "demo_student@xai.local",    "role": "student",    "learner_id": "learner_001"},
+    {"username": "demo_instructor", "password": "instructor123", "email": "demo_instructor@xai.local", "role": "instructor", "learner_id": None},
+]
+
+
+def _seed_demo_users() -> None:
+    from backend.app.auth.auth import hash_password
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import User, LearnerProfile
+
+    db = next(get_db())
+    try:
+        for spec in _DEMO_USERS:
+            user = db.query(User).filter(User.username == spec["username"]).first()
+            if user is None:
+                user = User(
+                    username=spec["username"],
+                    email=spec["email"],
+                    full_name=spec["username"].replace("_", " ").title(),
+                    hashed_password=hash_password(spec["password"]),
+                    role=spec["role"],
+                    is_active=True,
+                )
+                db.add(user)
+                db.flush()
+                if spec["role"] == "student" and spec["learner_id"]:
+                    db.add(LearnerProfile(user_id=user.id, learner_id=spec["learner_id"]))
+                log.info("Seeded demo user: %s (%s)", spec["username"], spec["role"])
+            else:
+                user.hashed_password = hash_password(spec["password"])
+                user.is_active = True
+                log.info("Updated demo user password: %s", spec["username"])
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log.warning("Demo user seeding failed: %s", e)
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Startup helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -421,6 +467,7 @@ async def lifespan(app: FastAPI):
 
     init_auth_db()
     log.info("Auth DB initialised (data/auth.db)")
+    _seed_demo_users()
 
     state.llm_narrator = LLMNarrator()
     if state.llm_narrator.available:
@@ -733,7 +780,8 @@ def predict(features: LearnerFeatures, bg: BackgroundTasks, model: str = "gbm"):
     X = _features_to_array(features)
 
     if model == "lstm" and state.lstm_model is not None:
-        seq    = _build_lstm_sequence([], features, state.feature_names)
+        _lstm_n = state.lstm_config.get("n_features", len(state.feature_names))
+        seq    = _build_lstm_sequence([], features, state.feature_names[:_lstm_n])
         proba  = state.lstm_model.predict_proba(seq)
         risk_score = float(proba[0, 1])
         model_used = "lstm"
@@ -804,6 +852,16 @@ def compare_models(req: CompareRequest):
     Always returns GBM results. LSTM sections are omitted gracefully if the
     LSTM or DeepSHAP explainer is not loaded.
     """
+    try:
+        return _compare_models_impl(req)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.exception("compare_models failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Compare failed: {exc}") from exc
+
+
+def _compare_models_impl(req: CompareRequest):
     _require_model()
     fd = req.features.model_dump()
     X  = _features_to_array(req.features)
@@ -820,7 +878,9 @@ def compare_models(req: CompareRequest):
     lstm_top3_temporal:      list[str]       = []
 
     if state.lstm_model is not None:
-        seq        = _build_lstm_sequence(req.history, req.features, state.feature_names)
+        lstm_n_features = state.lstm_config.get("n_features", len(state.feature_names))
+        lstm_feature_names = state.feature_names[:lstm_n_features]
+        seq        = _build_lstm_sequence(req.history, req.features, lstm_feature_names)
         lstm_score = round(float(state.lstm_model.predict_proba(seq)[0][1]), 4)
         lstm_risk_label = _risk_label(lstm_score)
 
@@ -975,7 +1035,8 @@ def explain(req: ExplainRequest):
 
     # LSTM temporal attributions
     if req.model == "lstm" and state.shap_explainer.deep_explainer is not None:
-        seq      = _build_lstm_sequence(req.history, req.features, state.feature_names)
+        _lstm_n = state.lstm_config.get("n_features", len(state.feature_names))
+        seq      = _build_lstm_sequence(req.history, req.features, state.feature_names[:_lstm_n])
         temporal = state.shap_explainer.explain_temporal(seq)
         resp["temporal_attributions"] = temporal.to_dict()
 

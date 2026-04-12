@@ -404,6 +404,7 @@ class LLMNarrator:
         self.model = model
         self._client = None
         resolved_key = api_key or os.getenv("GROQ_API_KEY")
+        self.api_key = resolved_key
         if resolved_key:
             try:
                 from groq import Groq
