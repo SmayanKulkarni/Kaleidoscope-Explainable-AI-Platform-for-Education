@@ -91,3 +91,8 @@
 - Updated the What-If simulator panel to derive delta from explicit `base_risk` and `new_risk` values when available.
 - Increased delta display precision so small real changes do not collapse into a misleading `0% no change` badge.
 - Revalidated the focused frontend contract tests after the UI formatting fix.
+
+## 2026-04-12 11:20 - GitHub Copilot (GPT-5.3-Codex)
+- Renamed frontend product branding from LearnLens to Kaliedoscope.
+- Updated visible brand labels in navbar, login, register, and HTML page title.
+- Verified no remaining `LearnLens` references in frontend source paths.

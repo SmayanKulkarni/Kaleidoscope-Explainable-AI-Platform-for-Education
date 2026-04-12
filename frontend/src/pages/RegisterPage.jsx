@@ -60,7 +60,7 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center px-4 py-12">
       <div className="max-w-lg w-full bg-surface-container-low p-8 rounded-2xl border border-outline-variant/20 shadow-2xl">
-        <h1 className="text-4xl font-headline font-black text-primary mb-2 text-center">LearnLens</h1>
+        <h1 className="text-4xl font-headline font-black text-primary mb-2 text-center">Kaliedoscope</h1>
         <h2 className="text-2xl font-bold mb-6 text-center">Create Account</h2>
 
         {error && (

@@ -121,3 +121,11 @@
   `frontend/src/components/panels/WhatIfForm.jsx` edited to prefer explicit base/new risk values and render delta with higher precision
   `cd "/media/smayan/500GB SSD/Datahack 4.0/frontend" && npm exec vitest run src/tests/xaiService.test.js src/tests/transforms.test.js`
 - Outcome: the What-If badge will no longer hide small changes behind integer rounding.
+
+## 2026-04-12 11:20 - GitHub Copilot (GPT-5.3-Codex)
+- User request applied: change frontend name from LearnLens to Kaliedoscope.
+- Commands run:
+  `grep_search` over `frontend/src/**` and `frontend/index.html` for LearnLens variants
+  Edited `frontend/src/components/Navbar.jsx`, `frontend/src/pages/Login.jsx`, `frontend/src/pages/RegisterPage.jsx`, and `frontend/index.html`
+  Re-ran `grep_search` to confirm no remaining matches in frontend source files
+- Outcome: frontend-facing branding text now displays Kaliedoscope.

@@ -85,3 +85,8 @@
 ## 2026-04-12 11:12 - GitHub Copilot (GPT-5.4-mini)
 - Context update: the `0% no change` badge in the What-If simulator was a frontend formatting issue, not necessarily a lack of model movement.
 - The panel now prefers `base_risk`/`new_risk` when present and shows the delta with decimal precision so small updates are visible.
+
+## 2026-04-12 11:20 - GitHub Copilot (GPT-5.3-Codex)
+- Context update: frontend product branding has been renamed from LearnLens to Kaliedoscope in user-visible source surfaces.
+- Updated brand render points include navbar title, auth page headers, and base document title in the frontend app shell.
+- Frontend source search now reports no remaining LearnLens-brand tokens.

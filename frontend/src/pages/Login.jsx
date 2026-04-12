@@ -35,7 +35,7 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-surface flex flex-col items-center justify-center relative">
       <div className="max-w-md w-full bg-surface-container-low p-8 rounded-2xl border border-outline-variant/20 shadow-2xl z-10 text-center">
-        <h1 className="text-4xl font-headline font-black text-primary mb-8">LearnLens</h1>
+        <h1 className="text-4xl font-headline font-black text-primary mb-8">Kaliedoscope</h1>
 
         <h2 className="text-2xl font-bold mb-6">Sign In</h2>
 
