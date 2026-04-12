@@ -1,9 +1,9 @@
-import { lazy, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { lazy, useState, useMemo } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { useCompare } from '../hooks/useCompare';
 import { DEFAULT_FEATURES } from '../api/dropout';
-import { compareNarrate } from '../api/recommend';
+import { compareNarrate, getInstructorStudents } from '../api/recommend';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import RiskScoreCard from '../components/panels/RiskScoreCard';
@@ -22,11 +22,35 @@ const GRAPH_LEGEND = [
 
 export default function ComparePage() {
   const { user } = useAuth();
-  const learner_id = user?.learner_id ?? user?.id ?? 'anonymous';
+  const isInstructor = user?.role === 'instructor' || user?.role === 'admin';
+  const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [narration, setNarration] = useState(null);
 
-  const { data: compareResult, isLoading, error } =
-    useCompare({ features: DEFAULT_FEATURES, learner_id });
+  // Instructor/admin: load student roster for picker
+  const { data: roster } = useQuery({
+    queryKey: ['instructor-students'],
+    queryFn: getInstructorStudents,
+    enabled: isInstructor,
+    staleTime: 60_000,
+  });
+  const students = roster?.students ?? [];
+
+  // Determine which learner to compare
+  const learner_id = isInstructor
+    ? (selectedStudentId ?? null)
+    : (user?.learner_id ?? user?.id ?? null);
+
+  // Get that student's features from the roster (for instructors)
+  const features = useMemo(() => {
+    if (!isInstructor || !selectedStudentId) return DEFAULT_FEATURES;
+    const s = students.find(x => x.learner_id === selectedStudentId);
+    return s?.features ?? DEFAULT_FEATURES;
+  }, [isInstructor, selectedStudentId, students]);
+
+  const { data: compareResult, isLoading, error } = useCompare(
+    { features, learner_id },
+    { enabled: !!learner_id }
+  );
 
   const narrateMutation = useMutation({
     mutationFn: () => compareNarrate(compareResult),
@@ -55,6 +79,36 @@ export default function ComparePage() {
               </div>
             )}
           </div>
+
+          {/* Instructor/Admin: student picker */}
+          {isInstructor && (
+            <div className="mb-6 bg-surface-container-low rounded-xl border border-outline-variant/10 p-4">
+              <label className="font-label text-xs uppercase tracking-widest text-slate-500 block mb-2">
+                Select Student to Compare
+              </label>
+              <select
+                value={selectedStudentId ?? ''}
+                onChange={e => { setSelectedStudentId(e.target.value || null); setNarration(null); }}
+                className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-full sm:w-80 focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="">— Select a student —</option>
+                {students.map(s => (
+                  <option key={s.learner_id} value={s.learner_id}>
+                    {s.display_name} ({((s.dropout_risk_score ?? 0) * 100).toFixed(0)}% risk)
+                  </option>
+                ))}
+              </select>
+              {!selectedStudentId && (
+                <p className="text-xs text-slate-400 font-label mt-2">Select a student to run the model comparison.</p>
+              )}
+            </div>
+          )}
+
+          {!isInstructor && !learner_id && (
+            <div className="mb-6 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm font-label">
+              Could not determine your student profile. Please re-login.
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div>
@@ -111,7 +165,7 @@ export default function ComparePage() {
           </GraphCard>
 
           {narration && (
-            <div className="bg-surface-container-lowest rounded-2xl p-6 border border-primary/10">
+            <div className="bg-surface-container-lowest rounded-2xl p-6 border border-primary/10 mt-6">
               <div className="flex items-center gap-2 mb-4">
                 <span className="material-symbols-outlined text-primary text-lg">auto_awesome</span>
                 <h3 className="font-headline font-bold text-base">AI Graph Narration</h3>

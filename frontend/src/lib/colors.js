@@ -36,3 +36,11 @@ export const riskColor = (score) => {
   if (score < 0.6) return RISK_COLORS.medium;
   return RISK_COLORS.high;
 };
+
+// Alias used by OutcomeDistributionCard — returns a Tailwind class string
+export const getRiskColor = (score) => {
+  if (score < 0.3) return 'text-green-600';
+  if (score < 0.6) return 'text-amber-500';
+  return 'text-red-600';
+};
+

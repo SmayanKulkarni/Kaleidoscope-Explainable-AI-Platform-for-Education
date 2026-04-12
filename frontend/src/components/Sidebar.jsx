@@ -27,6 +27,7 @@ export default function Sidebar() {
     { to: '/action-plan', icon: 'assignment_turned_in', label: 'Action Plan' },
     { to: '/xai/student', icon: 'psychology', label: 'XAI Explain' },
     { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
+    { to: '/simulate', icon: 'timeline', label: 'Simulate Future' },
     { to: '/history', icon: 'history', label: 'History' },
   ];
 
@@ -35,10 +36,20 @@ export default function Sidebar() {
     { to: '/what-if', icon: 'science', label: 'What-If Explorer' },
     { to: '/xai/instructor', icon: 'groups', label: 'Interventions' },
     { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
+    { to: '/simulate', icon: 'timeline', label: 'Simulate Future' },
+  ];
+
+  const adminLinks = [
+    { to: '/dashboard/admin', icon: 'admin_panel_settings', label: 'Admin Overview' },
+    { to: '/instructor', icon: 'groups', label: 'Instructor View' },
+    { to: '/student', icon: 'dashboard', label: 'Student View' },
+    { to: '/xai/instructor', icon: 'psychology', label: 'XAI Tools' },
     { to: '/instructor/history', icon: 'history', label: 'History' },
   ];
 
-  const links = user.role === 'instructor' ? instructorLinks : studentLinks;
+  const links = user.role === 'admin' ? adminLinks
+    : user.role === 'instructor' ? instructorLinks
+      : studentLinks;
 
   return (
     <aside className="h-screen w-64 fixed left-0 top-16 bg-surface-container-low flex flex-col pt-4 hidden md:flex border-r border-outline-variant/5">
@@ -56,7 +67,9 @@ export default function Sidebar() {
           </div>
           <div>
             <h3 className="font-headline font-bold text-sm leading-tight text-blue-800">{user.name || 'User'}</h3>
-            <p className="font-label text-[10px] text-primary/70 uppercase tracking-tighter">{user.role === 'student' ? 'AI Scholar' : 'Instructor'}</p>
+            <p className="font-label text-[10px] text-primary/70 uppercase tracking-tighter">
+              {user.role === 'student' ? 'AI Scholar' : user.role === 'admin' ? 'Administrator' : 'Instructor'}
+            </p>
           </div>
         </div>
       </div>
@@ -69,8 +82,8 @@ export default function Sidebar() {
               key={v.to}
               onClick={() => { if (!v.locked) navigate(v.to); }}
               className={`w-full text-left py-3 px-6 flex items-center gap-3 font-label text-sm transition-all ${isActive
-                  ? 'text-blue-800 font-bold bg-surface-container-lowest rounded-r-full'
-                  : `text-slate-600 hover:bg-blue-50 ${v.locked ? 'opacity-50 cursor-not-allowed' : ''}`
+                ? 'text-blue-800 font-bold bg-surface-container-lowest rounded-r-full'
+                : `text-slate-600 hover:bg-blue-50 ${v.locked ? 'opacity-50 cursor-not-allowed' : ''}`
                 }`}
             >
               <span className={`material-symbols-outlined ${isActive ? 'fill-current' : ''}`} style={{ fontVariationSettings: isActive ? "'FILL' 1" : "'FILL' 0" }}>{v.icon}</span>

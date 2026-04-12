@@ -3,6 +3,17 @@ import { login as apiLogin, register as apiRegister, getMe } from '../api/auth';
 
 const AuthContext = createContext(null);
 
+// Flatten nested profile fields to top-level for convenience
+function _flatten(me) {
+  if (!me) return me;
+  return {
+    ...me,
+    name:       me.full_name ?? me.username,
+    learner_id: me.learner_profile?.learner_id ?? null,
+    current_week: me.learner_profile?.current_week ?? null,
+  };
+}
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -18,7 +29,7 @@ export const AuthProvider = ({ children }) => {
       ]);
 
     withTimeout(getMe())
-      .then((me) => setUser(me))
+      .then((me) => setUser(_flatten(me)))
       .catch(() => {
         localStorage.removeItem('ll_token');
         localStorage.removeItem('ll_user');
@@ -31,10 +42,10 @@ export const AuthProvider = ({ children }) => {
     const tokenData = await apiLogin(username, password);
     localStorage.setItem('ll_token', tokenData.access_token);
     if (tokenData.learner_id) localStorage.setItem('ll_learner_id', tokenData.learner_id);
-    const me = await getMe();
+    const me = _flatten(await getMe());
     localStorage.setItem('ll_user', JSON.stringify(me));
     setUser(me);
-    return { ...me, role: tokenData.role };
+    return me;
   };
 
   const signup = async (body) => {

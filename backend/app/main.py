@@ -801,15 +801,16 @@ def _extract_json(raw: str) -> dict:
             pass
     raise ValueError(f"No valid JSON found in LLM response: {raw[:200]}")
 
-if _STATIC_DIR.exists():
+_ASSETS_DIR = _STATIC_DIR / "assets"
+if _ASSETS_DIR.exists():
     # Serve hashed asset bundles (JS, CSS, images)
-    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
-    log.info("Static assets mounted from %s", _STATIC_DIR / "assets")
+    app.mount("/assets", StaticFiles(directory=str(_ASSETS_DIR)), name="assets")
+    log.info("Static assets mounted from %s", _ASSETS_DIR)
 else:
     log.warning(
-        "Frontend static dir not found at %s — run 'npm run build' in frontend/\n"
-        "  The API endpoints still work; only the React UI is unavailable.",
-        _STATIC_DIR,
+        "Frontend build not found at %s — run 'npm run build' in frontend/ for production.\n"
+        "  In dev mode, Vite (npm run dev) serves the frontend on :5173 — API still works.",
+        _ASSETS_DIR,
     )
 
 
