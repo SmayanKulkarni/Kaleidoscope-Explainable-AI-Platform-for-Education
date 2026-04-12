@@ -12,6 +12,7 @@ import InstructorView from './pages/InstructorView';
 import ComparePage from './pages/ComparePage';
 import RegisterPage from './pages/RegisterPage';
 import AdminDashboard from './pages/AdminDashboard';
+import HistoryPage from './pages/HistoryPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ export default function App() {
               <Route path="/action-plan" element={<ActionPlan />} />
               <Route path="/xai/student" element={<StudentView />} />
               <Route path="/xai/compare" element={<ComparePage />} />
+              <Route path="/history" element={<HistoryPage />} />
             </Route>
 
             <Route element={<ProtectedRoute allowedRoles={['instructor', 'admin']} />}>
@@ -44,6 +46,7 @@ export default function App() {
               <Route path="/dashboard/instructor" element={<InstructorDashboard />} />
               <Route path="/what-if" element={<WhatIfExplorer />} />
               <Route path="/xai/instructor" element={<InstructorView />} />
+              <Route path="/instructor/history" element={<HistoryPage />} />
             </Route>
 
             <Route element={<ProtectedRoute allowedRoles={['admin']} />}>

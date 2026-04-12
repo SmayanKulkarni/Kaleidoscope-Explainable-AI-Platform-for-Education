@@ -27,7 +27,7 @@ export default function Sidebar() {
     { to: '/action-plan', icon: 'assignment_turned_in', label: 'Action Plan' },
     { to: '/xai/student', icon: 'psychology', label: 'XAI Explain' },
     { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
-    { to: '#history', icon: 'history', label: 'History' },
+    { to: '/history', icon: 'history', label: 'History' },
   ];
 
   const instructorLinks = [
@@ -35,7 +35,7 @@ export default function Sidebar() {
     { to: '/what-if', icon: 'science', label: 'What-If Explorer' },
     { to: '/xai/instructor', icon: 'groups', label: 'Interventions' },
     { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
-    { to: '#history', icon: 'history', label: 'History' },
+    { to: '/instructor/history', icon: 'history', label: 'History' },
   ];
 
   const links = user.role === 'instructor' ? instructorLinks : studentLinks;
