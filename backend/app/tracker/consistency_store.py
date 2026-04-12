@@ -53,6 +53,7 @@ class ExplanationRecord(Base):
     extra         = Column(Text, nullable=True)        # JSON dict for extensibility
 
     def to_dict(self) -> dict:
+        extra = json.loads(self.extra) if self.extra else {}
         return {
             "id":            self.id,
             "learner_id":    self.learner_id,
@@ -63,7 +64,9 @@ class ExplanationRecord(Base):
             "top3_features": json.loads(self.top3_features) if self.top3_features else [],
             "shap_values":   json.loads(self.shap_values) if self.shap_values else {},
             "anchor_rule":   self.anchor_rule,
-            "extra":         json.loads(self.extra) if self.extra else {},
+            "extra":         extra,
+            "features":      extra.get("features"),
+            "snapshot_week": extra.get("snapshot_week"),
         }
 
 

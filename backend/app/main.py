@@ -83,6 +83,7 @@ from backend.app.tracker.consistency_store import ExplanationStore
 from backend.app.tracker.drift_detector import ExplanationDriftDetector
 from backend.app.model.temporal_builder import MonteCarloSimulator
 from backend.app.recommender.ranker_explainer import RankerExplainer
+from backend.app.recommender.retrain_pipeline import RecommendationRetrainPipeline
 from backend.app.recommender.fairness_auditor import FairnessAuditor
 from backend.app.tracker.reco_consistency_store import RecommendationExplanationStore
 
@@ -441,6 +442,64 @@ def _load_rankers() -> None:
             log.info("%s loaded  features=%d", _attr, len(_art["feature_columns"]))
         else:
             log.warning("%s not found — run train_recommenders.py", _pkl_name)
+
+
+def _reload_rankers_runtime() -> dict:
+    """Reload recommendation rankers and precomputed reference pools into AppState."""
+    import pandas as _pd
+
+    topk_path = DATA_DIR / "recommendations" / "precomputed" / "student_topk.csv"
+    instr_topk_path = DATA_DIR / "recommendations" / "precomputed" / "instructor_topk.csv"
+    reco_ref_pool = _pd.read_csv(topk_path) if topk_path.exists() else None
+    instr_ref_pool = _pd.read_csv(instr_topk_path) if instr_topk_path.exists() else None
+
+    reco_models_dir = MODELS_DIR / "recommenders"
+    reloaded = []
+
+    for pkl_name, attr in [
+        ("student_ranker.pkl", "student_ranker_explainer"),
+        ("instructor_ranker.pkl", "instructor_ranker_explainer"),
+    ]:
+        rp = reco_models_dir / pkl_name
+        if not rp.exists():
+            raise FileNotFoundError(f"{pkl_name} not found in {reco_models_dir}")
+
+        with open(rp, "rb") as f:
+            art = pickle.load(f)
+
+        feat_cols = art["feature_columns"]
+        X_sample, pool = None, None
+        ref_source = reco_ref_pool if attr == "student_ranker_explainer" else instr_ref_pool
+        if ref_source is not None:
+            pool = ref_source
+            avail = [c for c in feat_cols if c in ref_source.columns]
+            if len(avail) >= 3:
+                ps = ref_source.dropna(subset=avail).head(500)
+                if len(ps) > 10:
+                    xf = _pd.DataFrame(0.0, index=range(len(ps)), columns=feat_cols)
+                    for c in avail:
+                        xf[c] = ps[c].values
+                    X_sample = xf.values.astype(float)
+
+        setattr(
+            state,
+            attr,
+            RankerExplainer(
+                model=art["model"],
+                feature_columns=feat_cols,
+                encoder_maps=art["metadata"]["encoder_maps"],
+                causal_annotator=state.causal_annotator,
+                X_train_sample=X_sample,
+                reference_pool=pool,
+            ),
+        )
+        reloaded.append(attr)
+
+    return {
+        "components_reloaded": reloaded,
+        "student_reference_rows": int(len(reco_ref_pool)) if reco_ref_pool is not None else 0,
+        "instructor_reference_rows": int(len(instr_ref_pool)) if instr_ref_pool is not None else 0,
+    }
 
 
 def _init_heavy_explainers(X_background) -> None:
@@ -1326,10 +1385,12 @@ def simulate(req: SimulateRequest):
 @app.get("/history/{learner_id}")
 def history(learner_id: str):
     if state.explanation_store is None:
-        return {"learner_id": learner_id, "timeline": [], "drift_flags": []}
+        return {"learner_id": learner_id, "timeline": [], "history": _snapshot_history_fallback(learner_id), "drift_flags": []}
 
     timeline = state.explanation_store.get_top3_timeline(learner_id)
     full_history = state.explanation_store.get_history(learner_id, n=10)
+    if not full_history:
+        full_history = _snapshot_history_fallback(learner_id)
 
     drift_flags = []
     if state.drift_detector is not None:
@@ -1671,6 +1732,95 @@ def trigger_hot_reload(
         MLOPS_CONTROL_LOCK.release()
 
 
+@app.post("/mlops/retrain-all")
+def trigger_full_retrain(
+    min_events: int = 0,
+    rs_seed: int = 42,
+    operator: str = Depends(require_mlops_operator),
+):
+    """Trigger retraining for both dropout models and recommendation rankers."""
+    if not MLOPS_CONTROL_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another MLOps control operation is already running")
+    try:
+        if state.event_store is None or state.feedback_store is None:
+            raise HTTPException(503, "Event store or feedback store not initialised")
+
+        if min_events > 0 and not (state.event_store.count() >= min_events):
+            return {
+                "success": False,
+                "queued": False,
+                "reason": f"Only {state.event_store.count()} events recorded (need ≥{min_events})",
+                "n_events": state.event_store.count(),
+            }
+
+        log.info("POST /mlops/retrain-all triggered by %s", operator)
+
+        dropout_pipeline = RetrainPipeline(
+            event_store=state.event_store,
+            feedback_store=state.feedback_store,
+            data_dir=DATA_DIR,
+            models_dir=MODELS_DIR,
+        )
+        dropout_result = dropout_pipeline.run(trigger="api:retrain-all")
+
+        recommender_pipeline = RecommendationRetrainPipeline(
+            event_store=state.event_store,
+            feedback_store=state.feedback_store,
+            data_dir=DATA_DIR,
+            models_dir=MODELS_DIR,
+        )
+        recommender_result = recommender_pipeline.run(trigger="api:retrain-all", seed=rs_seed)
+
+        overall_success = bool(dropout_result.success and recommender_result.success)
+        if overall_success:
+            uploaded = upload_models(MODELS_DIR)
+            log.info("S3: uploaded %d artifact(s) after full retrain", len(uploaded))
+
+        return {
+            "success": overall_success,
+            "trigger": "retrain-all",
+            "dropout": dropout_result.to_dict(),
+            "recommenders": recommender_result.to_dict(),
+            "message": (
+                "All retraining stages completed successfully. "
+                "Call POST /mlops/reload-all to activate." if overall_success
+                else "One or more retraining stages failed. Production models were not reloaded."
+            ),
+        }
+    finally:
+        MLOPS_CONTROL_LOCK.release()
+
+
+@app.post("/mlops/reload-all")
+def trigger_full_reload(
+    operator: str = Depends(require_mlops_operator),
+    canary_fraction: float = Query(1.0, ge=0.0, le=1.0,
+        description="Fraction of /predict traffic routed to the new dropout model stack."),
+):
+    """Hot-reload dropout stack and recommender rankers in one control operation."""
+    if not MLOPS_CONTROL_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another MLOps control operation is already running")
+    try:
+        log.info("POST /mlops/reload-all triggered by %s  canary_fraction=%.2f", operator, canary_fraction)
+        dropout_reload = hot_reload(state, DATA_DIR, MODELS_DIR, DEVICE, canary_fraction=canary_fraction)
+        if not dropout_reload.success:
+            raise HTTPException(500, detail={"dropout_reload": dropout_reload.to_dict()})
+
+        reco_reload = _reload_rankers_runtime()
+        return {
+            "success": True,
+            "trigger": "reload-all",
+            "dropout_reload": dropout_reload.to_dict(),
+            "recommender_reload": reco_reload,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, detail=f"Failed to reload recommendation rankers: {exc}")
+    finally:
+        MLOPS_CONTROL_LOCK.release()
+
+
 class FeedbackRequest(BaseModel):
     learner_id:              str
     explanation_id:          Optional[str]  = None
@@ -1798,9 +1948,11 @@ def my_history(
         raise HTTPException(404, "No learner profile found")
     learner_id = current_user.learner_profile.learner_id
     if state.explanation_store is None:
-        return {"learner_id": learner_id, "timeline": [], "drift_flags": []}
+        return {"learner_id": learner_id, "timeline": [], "history": _snapshot_history_fallback(learner_id), "drift_flags": []}
     timeline    = state.explanation_store.get_top3_timeline(learner_id)
     full_history = state.explanation_store.get_history(learner_id, n=10)
+    if not full_history:
+        full_history = _snapshot_history_fallback(learner_id)
     drift_flags = []
     if state.drift_detector is not None:
         drift = state.drift_detector.check_learner_drift(learner_id, state.explanation_store)
@@ -1812,6 +1964,77 @@ def my_history(
         "history":     full_history,
         "drift_flags": drift_flags,
     }
+
+
+def _snapshot_history_fallback(learner_id: str) -> list[dict]:
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import StudentSnapshot
+
+    db = next(get_db())
+    try:
+        snap = db.query(StudentSnapshot).filter(StudentSnapshot.learner_id == learner_id).first()
+        if snap is None:
+            return []
+        features = snap.to_features_dict()
+        return [{
+            "id": None,
+            "learner_id": learner_id,
+            "timestamp": snap.updated_at.isoformat() if snap.updated_at else None,
+            "risk_score": snap.dropout_risk_score,
+            "trust_score": None,
+            "model_used": "snapshot",
+            "top3_features": [],
+            "shap_values": {},
+            "anchor_rule": None,
+            "extra": {"source": "student_snapshot"},
+            "features": features,
+            "snapshot_week": snap.current_week_in_course,
+            "current_module": snap.current_module,
+            "current_presentation": snap.current_presentation,
+        }]
+    finally:
+        db.close()
+
+
+@app.get("/student/features/{learner_id}")
+def student_features(
+    learner_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Return the current per-learner snapshot features for dashboard rendering."""
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import StudentSnapshot
+
+    if current_user.role == "student":
+        if current_user.learner_profile is None or current_user.learner_profile.learner_id != learner_id:
+            raise HTTPException(status_code=403, detail="Students can only view their own features")
+    elif current_user.role not in ("admin", "instructor"):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    db = next(get_db())
+    try:
+        snap = db.query(StudentSnapshot).filter(StudentSnapshot.learner_id == learner_id).first()
+        if snap is None:
+            raise HTTPException(status_code=404, detail=f"No snapshot found for learner_id={learner_id!r}")
+
+        history = []
+        if state.explanation_store is not None:
+            history = state.explanation_store.get_history(learner_id, n=10)
+        if not history:
+            history = _snapshot_history_fallback(learner_id)
+
+        return {
+            "learner_id": learner_id,
+            "features": snap.to_features_dict(),
+            "history": history,
+            "dropout_risk_score": snap.dropout_risk_score,
+            "risk_trajectory": snap.risk_trajectory,
+            "current_module": snap.current_module,
+            "current_presentation": snap.current_presentation,
+            "display_name": snap.display_name,
+        }
+    finally:
+        db.close()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

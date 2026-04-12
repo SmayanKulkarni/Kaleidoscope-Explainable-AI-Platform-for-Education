@@ -1,9 +1,9 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getHealth, getMlopsHealth, getMlopsMetrics, getMlopsDriftReport, triggerRetrain, triggerReload } from '../api/dropout';
-import { recommendHealth, recommendStudent, explainFairness, getAdminEnrollments, getAdminInstructors, addAdminEnrollment, deleteAdminEnrollment } from '../api/recommend';
+import { recommendHealth, recommendStudent, explainFairness, getAdminEnrollments, getAdminInstructors, getAdminStudents, addAdminEnrollment, deleteAdminEnrollment } from '../api/recommend';
 import FairnessAuditPanel from '../components/panels/FairnessAuditPanel';
 import GraphCard from '../components/layout/GraphCard';
 
@@ -43,6 +43,8 @@ export default function AdminDashboard() {
   const [fairnessExplanation, setFairnessExplanation] = useState(null);
   const [enrollForm, setEnrollForm] = useState({ learner_id: '', instructor_profile_id: '', course_id: 'COURSE-001' });
   const [enrollError, setEnrollError] = useState(null);
+  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [selectedInstructorId, setSelectedInstructorId] = useState('');
 
   const { data: fairnessSample, isLoading: fairnessLoading } = useQuery({
     queryKey: ['admin-fairness-sample'],
@@ -71,11 +73,35 @@ export default function AdminDashboard() {
     staleTime: 30_000,
   });
 
+  const { data: adminStudents } = useQuery({
+    queryKey: ['admin-students'],
+    queryFn: getAdminStudents,
+    staleTime: 60_000,
+  });
+
   const { data: instructors } = useQuery({
     queryKey: ['admin-instructors'],
     queryFn: getAdminInstructors,
     staleTime: 60_000,
   });
+
+  const studentList = adminStudents?.students ?? [];
+  const instructorList = instructors?.instructors ?? [];
+
+  useEffect(() => {
+    if (!selectedStudentId && studentList.length > 0) {
+      setSelectedStudentId(studentList[0].learner_id);
+    }
+  }, [selectedStudentId, studentList]);
+
+  useEffect(() => {
+    if (!selectedInstructorId && instructorList.length > 0) {
+      setSelectedInstructorId(instructorList[0].profile_id ?? instructorList[0].instructor_profile_id ?? '');
+    }
+  }, [selectedInstructorId, instructorList]);
+
+  const selectedStudent = studentList.find((student) => student.learner_id === selectedStudentId) ?? null;
+  const selectedInstructor = instructorList.find((instructor) => (instructor.profile_id ?? instructor.instructor_profile_id) === selectedInstructorId) ?? null;
 
   const addEnrollMutation = useMutation({
     mutationFn: addAdminEnrollment,
@@ -99,6 +125,88 @@ export default function AdminDashboard() {
             <h1 className="text-4xl font-headline font-extrabold tracking-tight text-on-background mb-1">Admin Dashboard</h1>
             <p className="text-on-surface-variant font-body text-sm">System health, model metrics, drift monitoring, and MLOps controls.</p>
           </header>
+
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-lg">Identity Explorer</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-surface-container-lowest rounded-xl p-6 border border-outline-variant/5 shadow-sm space-y-4">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary">school</span>
+                  <h3 className="font-bold text-sm">Select Student</h3>
+                </div>
+                <select
+                  value={selectedStudentId}
+                  onChange={(e) => setSelectedStudentId(e.target.value)}
+                  className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-full focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">— Select a student —</option>
+                  {studentList.map((student) => (
+                    <option key={student.learner_id} value={student.learner_id}>
+                      {student.display_name ?? student.learner_id} ({student.learner_id})
+                    </option>
+                  ))}
+                </select>
+                {selectedStudent ? (
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg bg-surface p-3 border border-outline-variant/10">
+                      <div className="text-slate-400 uppercase tracking-widest">Learner ID</div>
+                      <div className="font-bold mt-1 break-all">{selectedStudent.learner_id}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface p-3 border border-outline-variant/10">
+                      <div className="text-slate-400 uppercase tracking-widest">Risk</div>
+                      <div className="font-bold mt-1">{((selectedStudent.dropout_risk_score ?? 0) * 100).toFixed(0)}%</div>
+                    </div>
+                    <div className="rounded-lg bg-surface p-3 border border-outline-variant/10 col-span-2">
+                      <div className="text-slate-400 uppercase tracking-widest">Current Snapshot</div>
+                      <div className="font-bold mt-1">{selectedStudent.current_module ?? '—'} · {selectedStudent.current_presentation ?? '—'} · Week {selectedStudent.features?.current_week_in_course ?? '—'}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">Choose a learner to inspect snapshot-backed dashboard data.</p>
+                )}
+              </div>
+
+              <div className="bg-surface-container-lowest rounded-xl p-6 border border-outline-variant/5 shadow-sm space-y-4">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-secondary">person</span>
+                  <h3 className="font-bold text-sm">Select Instructor</h3>
+                </div>
+                <select
+                  value={selectedInstructorId}
+                  onChange={(e) => setSelectedInstructorId(e.target.value)}
+                  className="border border-outline-variant/30 rounded-lg px-3 py-2 text-sm font-label bg-surface w-full focus:outline-none focus:ring-1 focus:ring-secondary"
+                >
+                  <option value="">— Select an instructor —</option>
+                  {instructorList.map((instructor) => {
+                    const profileId = instructor.profile_id ?? instructor.instructor_profile_id ?? '';
+                    return (
+                      <option key={profileId || instructor.user_id} value={profileId}>
+                        {instructor.full_name ?? instructor.username ?? profileId} ({instructor.department ?? 'No department'})
+                      </option>
+                    );
+                  })}
+                </select>
+                {selectedInstructor ? (
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg bg-surface p-3 border border-outline-variant/10">
+                      <div className="text-slate-400 uppercase tracking-widest">Profile ID</div>
+                      <div className="font-bold mt-1 break-all">{selectedInstructor.profile_id ?? selectedInstructor.instructor_profile_id}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface p-3 border border-outline-variant/10">
+                      <div className="text-slate-400 uppercase tracking-widest">Students</div>
+                      <div className="font-bold mt-1">{selectedInstructor.student_count ?? 0}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface p-3 border border-outline-variant/10 col-span-2">
+                      <div className="text-slate-400 uppercase tracking-widest">Instructor</div>
+                      <div className="font-bold mt-1">{selectedInstructor.full_name ?? selectedInstructor.username ?? '—'} · {selectedInstructor.department ?? '—'}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">Choose an instructor to inspect roster context and existing instructor records.</p>
+                )}
+              </div>
+            </div>
+          </section>
 
           {/* Health Status */}
           <section className="space-y-3">

@@ -39,3 +39,32 @@
 - Wired the ActionPlan page to the real learner explanation query path instead of static copy.
 - Added instructor fallback selection so the page can load a rostered learner when an instructor opens it.
 - Installed `vitest` and `happy-dom` in the frontend workspace and verified the focused frontend contract tests pass.
+
+## 2026-04-12 09:44 - GitHub Copilot (GPT-5.3-Codex)
+- Added reusable recommender trainer API (`train_recommenders`) so MLOps can trigger RS retraining programmatically.
+- Added `backend/app/recommender/retrain_pipeline.py` to retrain student/instructor rankers using learned implicit engagement features merged by `learner_id`.
+- Added new unified backend control-plane endpoints: `POST /mlops/retrain-all` and `POST /mlops/reload-all`.
+- Added runtime recommender hot-reload helper to refresh both ranker explainers and reference pools without process restart.
+- Updated `.github/workflows/retrain.yml` to call the new unified retrain/reload endpoints.
+
+## 2026-04-12 10:07 - GitHub Copilot (GPT-5.3-Codex)
+- Added snapshot-backed student feature endpoint at `GET /student/features/{learner_id}` so learner-specific dashboard data is no longer dependent on shared defaults.
+- Updated `/history/{learner_id}` and `/explain/me/history` to fall back to snapshot-backed records when explanation history is empty.
+- Rewired `StudentDashboard` and `StudentView` to fetch learner-specific features/explanations from the active learner ID instead of `DEFAULT_FEATURES`.
+- Added admin identity explorer controls for selecting both students and instructors from seeded data.
+- Added `scripts/seed_oulad_users.py` to seed a medium OULAD cohort with student/instructor accounts, snapshots, and history records plus exportable credentials.
+
+## 2026-04-12 10:24 - GitHub Copilot (GPT-5.4-mini)
+- Executed `scripts/seed_oulad_users.py --cohort-size 50` against the PostgreSQL-backed auth store.
+- Seed completed successfully with 50 student accounts and 5 instructor accounts.
+- Verified the exported credentials file contains 55 records total and the seeded learner snapshots differ across learners.
+
+## 2026-04-12 10:31 - GitHub Copilot (GPT-5.4-mini)
+- Ran authenticated smoke tests against `http://127.0.0.1:8000/auth/login` and `/auth/me` for three seeded students and one seeded instructor.
+- All four accounts returned HTTP 200 for login and profile retrieval.
+- Confirmed students receive learner profiles plus learner IDs, while the instructor receives an instructor profile and no learner profile.
+
+## 2026-04-12 10:39 - GitHub Copilot (GPT-5.4-mini)
+- Extended `scripts/seed_oulad_users.py` to support `--snapshot-week` and additive credential merging.
+- Seeded 10 additional students from snapshot week 6 using `--cohort-size 10 --snapshot-week 6 --sample-offset 50`.
+- Verified the combined credential export now contains 65 records total, including 10 week-6 students, and the new week-6 logins authenticate successfully.

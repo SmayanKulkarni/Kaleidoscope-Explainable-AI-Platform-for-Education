@@ -39,6 +39,9 @@ export const postInstructorExplain = ({ instructor_id, features, item_id = '' })
 export const getInstructorStudents = () =>
   client.get('/instructor/students').then((r) => r.data);
 
+export const getAdminStudents = () =>
+  client.get('/instructor/students').then((r) => r.data);
+
 export const getInstructorRecoForStudent = (learner_id) =>
   client.post(`/instructor/recommend/${learner_id}`, {}).then((r) => r.data);
 

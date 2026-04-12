@@ -1,26 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import AIHelpModal from '../components/AIHelpModal';
 import { getStudentData } from '../services/xaiService';
 import { useAuth } from '../context/AuthContext';
-import { useExplain } from '../hooks/useExplain';
-import { DEFAULT_FEATURES } from '../api/dropout';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
-  const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('Prediction');
   const [aiModalOpen, setAiModalOpen] = useState(false);
 
-  const learner_id = user?.learner_id ?? user?.id ?? 'anonymous';
-  const { data: explanation } = useExplain({
-    features: DEFAULT_FEATURES, learner_id, model: 'gbm', audience: 'learner'
+  const learner_id = user?.learner_id ?? localStorage.getItem('ll_learner_id') ?? 'anonymous';
+  const { data, isLoading } = useQuery({
+    queryKey: ['student-dashboard', learner_id],
+    queryFn: () => getStudentData({ learner_id, audience: 'learner' }),
+    enabled: !!learner_id,
+    staleTime: 5 * 60 * 1000,
   });
 
-  useEffect(() => { getStudentData().then(setData); }, []);
+  const explanation = data?.rawExplain;
 
-  if (!data) return <div className="min-h-screen flex items-center justify-center bg-surface">Loading Dashboard...</div>;
+  if (isLoading || !data) return <div className="min-h-screen flex items-center justify-center bg-surface">Loading Dashboard...</div>;
 
   const renderTabContent = () => {
     let listData = [];

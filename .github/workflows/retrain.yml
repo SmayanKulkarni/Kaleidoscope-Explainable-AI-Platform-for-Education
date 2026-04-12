@@ -25,14 +25,14 @@ jobs:
     environment: production
 
     steps:
-      - name: Trigger POST /mlops/retrain on live server
+      - name: Trigger POST /mlops/retrain-all on live server
         id: retrain
         run: |
           MIN_EVENTS="${{ github.event.inputs.min_events || '50' }}"
-          echo "Calling /mlops/retrain with min_events=${MIN_EVENTS}"
+          echo "Calling /mlops/retrain-all with min_events=${MIN_EVENTS}"
 
           RESPONSE=$(curl -sf -X POST \
-            "http://${{ secrets.EC2_HOST }}:8000/mlops/retrain?min_events=${MIN_EVENTS}" \
+            "http://${{ secrets.EC2_HOST }}:8000/mlops/retrain-all?min_events=${MIN_EVENTS}" \
             -H "Content-Type: application/json" \
             -H "X-MLOPS-Token: ${{ secrets.MLOPS_AUTOMATION_TOKEN }}" \
             --max-time 1800 \
@@ -45,7 +45,7 @@ jobs:
           echo "Response: $BODY"
 
           # Parse success field from JSON response
-          SUCCESS=$(echo "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('success', False))" 2>/dev/null || echo "false")
+          SUCCESS=$(echo "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('success', False)).lower())" 2>/dev/null || echo "false")
 
           echo "retrain_success=${SUCCESS}" >> "$GITHUB_OUTPUT"
           echo "retrain_response<<EOF" >> "$GITHUB_OUTPUT"
@@ -53,18 +53,18 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: /mlops/retrain returned HTTP $HTTP_STATUS"
+            echo "ERROR: /mlops/retrain-all returned HTTP $HTTP_STATUS"
             exit 1
           fi
 
       - name: Hot-reload model (if retrain succeeded)
         id: reload
-        if: steps.retrain.outputs.retrain_success == 'True' && (github.event.inputs.force_reload == 'true' || github.event_name == 'schedule')
+        if: steps.retrain.outputs.retrain_success == 'true' && (github.event.inputs.force_reload == 'true' || github.event_name == 'schedule')
         run: |
-          echo "Calling /mlops/reload to hot-swap model into live server"
+          echo "Calling /mlops/reload-all to hot-swap model into live server"
 
           RESPONSE=$(curl -sf -X POST \
-            "http://${{ secrets.EC2_HOST }}:8000/mlops/reload" \
+            "http://${{ secrets.EC2_HOST }}:8000/mlops/reload-all" \
             -H "Content-Type: application/json" \
             -H "X-MLOPS-Token: ${{ secrets.MLOPS_AUTOMATION_TOKEN }}" \
             --max-time 120 \
@@ -76,7 +76,7 @@ jobs:
           echo "Reload response: $BODY"
 
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: /mlops/reload returned HTTP $HTTP_STATUS"
+            echo "ERROR: /mlops/reload-all returned HTTP $HTTP_STATUS"
             echo "BODY: $BODY"
             exit 1
           fi

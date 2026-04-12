@@ -1,10 +1,10 @@
 import { lazy, useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { useExplain } from '../hooks/useExplain';
 import { useRecommendStudent } from '../hooks/useRecommend';
-import { useMutation } from '@tanstack/react-query';
-import { DEFAULT_FEATURES } from '../api/dropout';
 import { recommendStudentExplain } from '../api/recommend';
+import { fetchLearnerFeatures } from '../services/xaiService';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import RiskScoreCard from '../components/panels/RiskScoreCard';
@@ -42,10 +42,15 @@ export default function StudentView() {
   const { user } = useAuth();
   const learner_id = user?.learner_id ?? user?.id ?? 'anonymous';
 
-  const features = DEFAULT_FEATURES;
+  const { data: features, isLoading: featuresLoading } = useQuery({
+    queryKey: ['student-view-features', learner_id],
+    queryFn: () => fetchLearnerFeatures(learner_id),
+    enabled: !!learner_id,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const { data: explanation, isLoading: explainLoading, error: explainError } =
-    useExplain({ features, learner_id, model: 'gbm', audience: 'learner' });
+    useExplain({ features: features ?? null, learner_id, model: 'gbm', audience: 'learner' }, { enabled: !!features });
 
   const { data: recoData, isLoading: recoLoading } =
     useRecommendStudent({ learner_id, items: SAMPLE_ITEMS, top_k: 5 });
@@ -94,21 +99,21 @@ export default function StudentView() {
                 riskScore={explanation?.risk_score}
                 riskLabel={explanation?.risk_label}
                 modelVersion={explanation?.model_version}
-                loading={explainLoading}
+                loading={explainLoading || featuresLoading}
               />
               <AnchorRuleCard
                 anchorRule={explanation?.anchor_rule}
                 precision={explanation?.anchor_rule?.precision}
-                loading={explainLoading}
+                loading={explainLoading || featuresLoading}
               />
-              <TrustScoreCard trustScore={explanation?.trust_score} loading={explainLoading} />
+              <TrustScoreCard trustScore={explanation?.trust_score} loading={explainLoading || featuresLoading} />
             </div>
 
             <div className="space-y-4">
               <TopFeaturesBar
                 shapValues={explanation?.shap_values}
                 topFeatures={explanation?.top_features}
-                loading={explainLoading}
+                loading={explainLoading || featuresLoading}
               />
               <WhatIfForm
                 baseFeatures={features}

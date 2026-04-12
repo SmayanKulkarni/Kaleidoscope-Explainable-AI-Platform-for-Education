@@ -222,20 +222,13 @@ def _save_artifact(file_name: str, model, data: PreparedData, metrics: Dict[str,
     return path
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Train student and instructor recommendation rankers")
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
+def train_recommenders(
+    student_df: pd.DataFrame,
+    instructor_df: pd.DataFrame,
+    seed: int = 42,
+) -> Dict[str, object]:
+    """Train and persist student/instructor rankers from provided dataframes."""
     configure_mlflow(experiment="xai-recommendation-engine")
-
-    student_path = RECO_DIR / "student_recommendation_dataset.csv"
-    instructor_path = RECO_DIR / "instructor_recommendation_dataset.csv"
-    if not student_path.exists() or not instructor_path.exists():
-        raise FileNotFoundError("Recommendation datasets not found. Run synthetic generation first.")
-
-    student_df = pd.read_csv(student_path)
-    instructor_df = pd.read_csv(instructor_path)
 
     student_data = _prepare_data(
         df=student_df,
@@ -247,7 +240,7 @@ def main():
             "recommendation_score",
             "student_id",
         ],
-        seed=args.seed,
+        seed=seed,
     )
 
     instructor_data = _prepare_data(
@@ -262,7 +255,7 @@ def main():
             "predicted_improvement_score",   # leaky — model-derived output
             "priority_reason_tag",           # leaky — label summarising decision
         ],
-        seed=args.seed,
+        seed=seed,
     )
 
     log.info("Training student ranker ...")
@@ -270,7 +263,7 @@ def main():
         student_data,
         run_name="student-ranker-lgbm",
         registered_model_name="student-recommendation-ranker",
-        seed=args.seed,
+        seed=seed,
     )
 
     log.info("Training instructor ranker ...")
@@ -278,14 +271,14 @@ def main():
         instructor_data,
         run_name="instructor-ranker-lgbm",
         registered_model_name="instructor-recommendation-ranker",
-        seed=args.seed,
+        seed=seed,
     )
 
     sp = _save_artifact("student_ranker.pkl", student_model, student_data, student_metrics)
     ip = _save_artifact("instructor_ranker.pkl", instructor_model, instructor_data, instructor_metrics)
 
     log.info("Building precomputed top-K CSVs ...")
-    _build_topk_csv(student_df,    student_model,    student_data,    "student_topk.csv",    top_k=5)
+    _build_topk_csv(student_df, student_model, student_data, "student_topk.csv", top_k=5)
     _build_topk_csv(instructor_df, instructor_model, instructor_data, "instructor_topk.csv", top_k=5)
 
     summary = {
@@ -302,6 +295,22 @@ def main():
     log.info("Student metrics: %s", student_metrics)
     log.info("Instructor metrics: %s", instructor_metrics)
     log.info("Saved summary -> %s", summary_path)
+    return summary
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Train student and instructor recommendation rankers")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    student_path = RECO_DIR / "student_recommendation_dataset.csv"
+    instructor_path = RECO_DIR / "instructor_recommendation_dataset.csv"
+    if not student_path.exists() or not instructor_path.exists():
+        raise FileNotFoundError("Recommendation datasets not found. Run synthetic generation first.")
+
+    student_df = pd.read_csv(student_path)
+    instructor_df = pd.read_csv(instructor_path)
+    train_recommenders(student_df=student_df, instructor_df=instructor_df, seed=args.seed)
 
 
 if __name__ == "__main__":

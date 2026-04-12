@@ -34,3 +34,32 @@
 - Context update: ActionPlan now queries the same learner explainability path and supports instructor-selected roster learners.
 - Frontend test tooling is now present in the workspace (`vitest`, `happy-dom`), so the contract tests can be run locally.
 - Focused frontend validation is green after the service and page rewiring.
+
+## 2026-04-12 09:44 - GitHub Copilot (GPT-5.3-Codex)
+- Context update: MLOps control-plane now includes unified endpoints for end-to-end model lifecycle across dropout and recommender stacks.
+- New endpoint `POST /mlops/retrain-all` runs both dropout retraining and RS retraining in one operation.
+- New endpoint `POST /mlops/reload-all` hot-reloads dropout artifacts and runtime recommender ranker explainers.
+- RS retraining now consumes learned implicit engagement signals from runtime events/feedback via `ImplicitAggregator`, merged into recommendation training data by `learner_id`.
+- Scheduled/manual retrain workflow now calls `/mlops/retrain-all` and `/mlops/reload-all`.
+
+## 2026-04-12 10:07 - GitHub Copilot (GPT-5.3-Codex)
+- Context update: student-facing pages now pull features from snapshot-backed learner data instead of the shared `DEFAULT_FEATURES` fallback.
+- New endpoint `GET /student/features/{learner_id}` returns the current snapshot plus history fallback data for a learner.
+- `/history/{learner_id}` and `/explain/me/history` now synthesize snapshot-backed records when no explanation history exists.
+- Admin dashboard now includes an identity explorer for selecting a student and an instructor and viewing their current snapshot/roster context.
+- New seeding script `scripts/seed_oulad_users.py` can create medium-cohort OULAD users, instructor users, and export login credentials.
+
+## 2026-04-12 10:24 - GitHub Copilot (GPT-5.4-mini)
+- Context update: OULAD seed rollout was executed in the PostgreSQL auth store, not the local SQLite fallback.
+- Exported credentials file now contains 50 seeded student logins and 5 instructor logins.
+- DB verification confirmed multiple student snapshots differ across learners, so the student pages should no longer collapse onto shared demo state.
+
+## 2026-04-12 10:31 - GitHub Copilot (GPT-5.4-mini)
+- Context update: seeded users now authenticate successfully against the running backend.
+- Student logins return learner profiles and learner IDs, and instructor login returns an instructor profile as expected.
+- The current seed set is usable for smoke testing the learner- and instructor-specific UI paths.
+
+## 2026-04-12 10:39 - GitHub Copilot (GPT-5.4-mini)
+- Context update: the seeding tool can now target a specific snapshot week and append credentials without clobbering the existing cohort.
+- Additional week-6 learners have been added alongside the week-12 cohort, bringing the exported credential count to 65.
+- Week-6 accounts authenticate cleanly and preserve the expected course/current_week metadata in `/auth/me`.
