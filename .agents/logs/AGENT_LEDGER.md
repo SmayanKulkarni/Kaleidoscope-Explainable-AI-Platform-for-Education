@@ -616,3 +616,18 @@ POST /simulate  →  200  outcome_distribution.dropout_prob_mean=0.401  dropout_
 4. `student_study_tips` and `compare/narrate` direct Groq calls: guarded `.content` with `or ""` to silence Pyright lint.
 
 **Result:** All LLM narration endpoints now return meaningful, data-grounded text at all times.
+
+### [2025-07-17] Cascade (Windsurf) - Frontend Event Tracking + Admin Backend + UI Polish
+- **Files Modified:** `frontend/src/pages/WhatIfExplorer.jsx`, `frontend/src/pages/ActionPlan.jsx`, `frontend/src/pages/HistoryPage.jsx`, `frontend/src/pages/ComparePage.jsx`, `frontend/src/pages/SimulatePage.jsx`, `frontend/src/constants/eventTypes.js`, `frontend/src/context/AuthContext.jsx`, `backend/app/auth/router.py`, `backend/app/main.py`, `frontend/src/api/recommend.js`, `frontend/src/components/Navbar.jsx`, `frontend/src/components/Sidebar.jsx`, `frontend/src/App.jsx`, `frontend/src/pages/AdminDashboard.jsx`, `backend/app/model/s3_loader.py`
+- **What was done:**
+  1. **Event tracking**: Wired `useEventTracker` + `PAGE_VIEW` into all 11 frontend pages; `WHATIF_RUN` on WhatIfExplorer mutation.
+  2. **Backend registration**: Auto-generate `learner_id` for students if not provided; create cold-start `StudentSnapshot` on student registration.
+  3. **Admin backend endpoints**: `POST /admin/sync-oulad` (bulk-create users from seed JSON), `GET /admin/students` (all students with profile+snapshot), `POST /admin/enrollments/bulk`.
+  4. **Frontend API client**: Added `syncOuladUsers`, `bulkEnrollStudents`, `deactivateUser`, `activateUser`; fixed `getAdminStudents` URL.
+  5. **Navbar**: Admin role now shows Instructor View + Admin Dashboard links.
+  6. **Sidebar**: Dead links replaced with functional buttons; Sign Out button with `logout()` + navigate; expanded admin sidebar with What-If, Simulate, Compare links.
+  7. **App.jsx**: Added `/admin` redirect to `/dashboard/admin`.
+  8. **AdminDashboard**: Added User Management section with OULAD Sync button, student table with activate/deactivate toggle.
+  9. **S3 loader**: Added `recommendation_training_summary.json` to `_MODEL_FILES`; added `recommenders/` directory sync to both download and upload functions.
+- **Why it was done:** Production readiness — smooth onboarding for new students/instructors, admin user management, implicit data capture for MLOps retraining pipeline.
+- **Dependencies/Impacts:** Event tracking feeds into engagement signals for retraining. Admin endpoints require admin role JWT. S3 sync now covers all model artifacts including recommenders.

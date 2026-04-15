@@ -1,9 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { useSimulate } from '../hooks/useSimulate';
 import { DEFAULT_FEATURES } from '../api/dropout';
 import { getInstructorStudents } from '../api/recommend';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, SIMULATE_RUN } from '../constants/eventTypes';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import SimulationSetupPanel from '../components/panels/SimulationSetupPanel';
@@ -14,6 +16,8 @@ import FeatureProjectionGrid from '../components/panels/FeatureProjectionGrid';
 export default function SimulatePage() {
   const { user } = useAuth();
   const isInstructor = user?.role === 'instructor' || user?.role === 'admin';
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/simulate' }); }, []);
 
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [outcome, setOutcome] = useState(null);

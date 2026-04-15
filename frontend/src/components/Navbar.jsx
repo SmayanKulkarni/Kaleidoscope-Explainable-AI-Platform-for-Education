@@ -31,24 +31,29 @@ export default function Navbar() {
       <div className="flex items-center gap-8">
         <span className="text-2xl font-black tracking-tight text-blue-900 font-headline dark:text-blue-200">Kaliedoscope</span>
         <div className="hidden md:flex gap-6 h-full items-center">
-          {user.role === 'student' ? (
-            <>
-              <button
-                onClick={() => navigate('/student')}
-                className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/student' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
-              >
-                Student View
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => navigate('/instructor')}
-                className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/instructor' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
-              >
-                Instructor View
-              </button>
-            </>
+          {user.role === 'student' && (
+            <button
+              onClick={() => navigate('/student')}
+              className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/student' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
+            >
+              Student View
+            </button>
+          )}
+          {(user.role === 'instructor' || user.role === 'admin') && (
+            <button
+              onClick={() => navigate('/instructor')}
+              className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/instructor' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
+            >
+              Instructor View
+            </button>
+          )}
+          {user.role === 'admin' && (
+            <button
+              onClick={() => navigate('/dashboard/admin')}
+              className={`font-label text-sm uppercase tracking-wider h-full flex items-center transition-colors ${location.pathname === '/dashboard/admin' ? 'text-primary font-bold border-b-2 border-primary' : 'text-slate-500 hover:text-primary'}`}
+            >
+              Admin
+            </button>
           )}
         </div>
       </div>

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getHealth, getMlopsHealth, getMlopsMetrics, getMlopsDriftReport, triggerRetrain, triggerReload } from '../api/dropout';
-import { recommendHealth, recommendStudent, explainFairness, getAdminEnrollments, getAdminInstructors, getAdminStudents, addAdminEnrollment, deleteAdminEnrollment } from '../api/recommend';
+import { recommendHealth, recommendStudent, explainFairness, getAdminEnrollments, getAdminInstructors, getAdminStudents, addAdminEnrollment, deleteAdminEnrollment, syncOuladUsers, bulkEnrollStudents, deactivateUser, activateUser } from '../api/recommend';
 import FairnessAuditPanel from '../components/panels/FairnessAuditPanel';
 import GraphCard from '../components/layout/GraphCard';
 
@@ -73,10 +73,20 @@ export default function AdminDashboard() {
     staleTime: 30_000,
   });
 
-  const { data: adminStudents } = useQuery({
+  const { data: adminStudents, refetch: refetchStudents } = useQuery({
     queryKey: ['admin-students'],
     queryFn: getAdminStudents,
     staleTime: 60_000,
+  });
+
+  const syncOulad = useMutation({
+    mutationFn: syncOuladUsers,
+    onSuccess: () => { refetchStudents(); refetchEnrollments(); },
+  });
+
+  const toggleUserActive = useMutation({
+    mutationFn: ({ userId, activate }) => activate ? activateUser(userId) : deactivateUser(userId),
+    onSuccess: () => refetchStudents(),
   });
 
   const { data: instructors } = useQuery({
@@ -479,6 +489,104 @@ export default function AdminDashboard() {
                     ))}
                     {(enrollments?.enrollments ?? []).length === 0 && (
                       <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400 font-label text-sm">No enrollments found.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          {/* User Management */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-headline font-bold text-lg">User Management</h2>
+              <button
+                onClick={() => syncOulad.mutate()}
+                disabled={syncOulad.isPending}
+                className="px-4 py-2 bg-primary text-white rounded-xl font-bold text-sm hover:bg-primary/90 transition-colors disabled:opacity-60 flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-sm">sync</span>
+                {syncOulad.isPending ? 'Syncing...' : 'Sync OULAD Users'}
+              </button>
+            </div>
+
+            {syncOulad.data && (
+              <div className="text-xs p-3 rounded-lg bg-green-50 text-green-700 border border-green-200">
+                Created {syncOulad.data.created_users} users, skipped {syncOulad.data.skipped_existing} existing, {syncOulad.data.snapshots_created} snapshots.
+                {syncOulad.data.errors?.length > 0 && <span className="text-amber-600 ml-2">Errors: {syncOulad.data.errors.join(', ')}</span>}
+              </div>
+            )}
+            {syncOulad.error && (
+              <div className="text-xs p-3 rounded-lg bg-red-50 text-red-600 border border-red-200">
+                {syncOulad.error.response?.data?.detail ?? 'Sync failed'}
+              </div>
+            )}
+
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/5 shadow-sm overflow-hidden">
+              <div className="px-6 py-3 bg-surface-container flex items-center justify-between">
+                <span className="font-label text-[10px] uppercase tracking-widest text-slate-500">
+                  {studentList.length} students registered
+                </span>
+              </div>
+              <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-surface-container font-label text-[10px] uppercase tracking-widest text-slate-500 sticky top-0">
+                    <tr>
+                      <th className="px-4 py-3">Username</th>
+                      <th className="px-4 py-3">Name</th>
+                      <th className="px-4 py-3">Learner ID</th>
+                      <th className="px-4 py-3">Course</th>
+                      <th className="px-4 py-3">Risk</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">Last Login</th>
+                      <th className="px-4 py-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant/5">
+                    {studentList.map(s => (
+                      <tr key={s.user_id} className="hover:bg-primary/5 transition-colors">
+                        <td className="px-4 py-2.5 font-label text-sm font-bold">{s.username}</td>
+                        <td className="px-4 py-2.5 font-label text-sm text-slate-600">{s.full_name ?? '—'}</td>
+                        <td className="px-4 py-2.5 font-label text-xs text-slate-500 font-mono">{s.learner_id ?? '—'}</td>
+                        <td className="px-4 py-2.5 font-label text-xs text-slate-500">{s.course_id ?? '—'}</td>
+                        <td className="px-4 py-2.5">
+                          {s.risk_score != null ? (
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                              s.risk_score >= 0.6 ? 'bg-red-100 text-red-700'
+                              : s.risk_score >= 0.35 ? 'bg-amber-100 text-amber-700'
+                              : 'bg-green-100 text-green-700'
+                            }`}>
+                              {(s.risk_score * 100).toFixed(0)}%
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className={`text-xs font-bold ${s.is_active ? 'text-green-600' : 'text-red-500'}`}>
+                            {s.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 font-label text-xs text-slate-400">
+                          {s.last_login ? new Date(s.last_login).toLocaleDateString() : 'Never'}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button
+                            onClick={() => toggleUserActive.mutate({ userId: s.user_id, activate: !s.is_active })}
+                            disabled={toggleUserActive.isPending}
+                            className={`text-xs font-bold px-3 py-1 rounded-lg transition-colors ${
+                              s.is_active
+                                ? 'text-red-600 hover:bg-red-50 border border-red-200'
+                                : 'text-green-600 hover:bg-green-50 border border-green-200'
+                            }`}
+                          >
+                            {s.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {studentList.length === 0 && (
+                      <tr><td colSpan={8} className="px-6 py-8 text-center text-slate-400 font-label text-sm">No students found. Try syncing OULAD users above.</td></tr>
                     )}
                   </tbody>
                 </table>

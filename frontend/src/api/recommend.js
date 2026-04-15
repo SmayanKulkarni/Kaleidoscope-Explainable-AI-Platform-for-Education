@@ -40,7 +40,7 @@ export const getInstructorStudents = () =>
   client.get('/instructor/students').then((r) => r.data);
 
 export const getAdminStudents = () =>
-  client.get('/instructor/students').then((r) => r.data);
+  client.get('/admin/students').then((r) => r.data);
 
 export const getInstructorRecoForStudent = (learner_id) =>
   client.post(`/instructor/recommend/${learner_id}`, {}).then((r) => r.data);
@@ -72,3 +72,15 @@ export const addAdminEnrollment = (payload) =>
 
 export const deleteAdminEnrollment = (id) =>
   client.delete(`/admin/enrollments/${id}`).then((r) => r.data);
+
+export const syncOuladUsers = () =>
+  client.post('/admin/sync-oulad').then((r) => r.data);
+
+export const bulkEnrollStudents = (payload) =>
+  client.post('/admin/enrollments/bulk', payload).then((r) => r.data);
+
+export const deactivateUser = (userId) =>
+  client.post(`/admin/users/${userId}/deactivate`).then((r) => r.data);
+
+export const activateUser = (userId) =>
+  client.post(`/admin/users/${userId}/activate`).then((r) => r.data);

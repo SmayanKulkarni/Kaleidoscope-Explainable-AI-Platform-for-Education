@@ -5,11 +5,15 @@ import Sidebar from '../components/Sidebar';
 import { getStudentData } from '../services/xaiService';
 import { useAuth } from '../context/AuthContext';
 import { getInstructorStudents } from '../api/recommend';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, ACTION_VIEWED } from '../constants/eventTypes';
 
 export default function ActionPlan() {
   const { user } = useAuth();
   const isInstructor = user?.role === 'instructor';
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/action-plan' }); }, []);
 
   const { data: roster } = useQuery({
     queryKey: ['instructor-students'],

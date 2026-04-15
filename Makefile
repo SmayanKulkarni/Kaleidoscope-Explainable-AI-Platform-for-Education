@@ -158,10 +158,12 @@ tf-destroy:
 models-upload:
 	@test -n "$(AWS_S3_BUCKET)" || (echo "Set AWS_S3_BUCKET first"; exit 1)
 	aws s3 cp models/ s3://$(AWS_S3_BUCKET)/models/ --recursive
+	aws s3 cp data/recommendations/precomputed/ s3://$(AWS_S3_BUCKET)/models/precomputed/ --recursive
 
 models-download:
 	@test -n "$(AWS_S3_BUCKET)" || (echo "Set AWS_S3_BUCKET first"; exit 1)
 	aws s3 cp s3://$(AWS_S3_BUCKET)/models/ models/ --recursive
+	aws s3 cp s3://$(AWS_S3_BUCKET)/models/precomputed/ data/recommendations/precomputed/ --recursive
 
 retrain:
 	@test -n "$(API_HOST)" || (echo "Set API_HOST=http://your-ec2-ip:8000"; exit 1)

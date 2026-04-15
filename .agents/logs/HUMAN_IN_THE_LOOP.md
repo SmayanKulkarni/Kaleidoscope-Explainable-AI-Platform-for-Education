@@ -129,3 +129,20 @@
   Edited `frontend/src/components/Navbar.jsx`, `frontend/src/pages/Login.jsx`, `frontend/src/pages/RegisterPage.jsx`, and `frontend/index.html`
   Re-ran `grep_search` to confirm no remaining matches in frontend source files
 - Outcome: frontend-facing branding text now displays Kaliedoscope.
+
+## 2026-04-15 20:32 - GitHub Copilot (GPT-5.3-Codex)
+- User request applied: implement the attached master plan.
+- Commands run:
+  `source .venv/bin/activate && python -m py_compile backend/app/model/s3_loader.py`
+  `date '+%Y-%m-%d %H:%M'`
+  Workspace searches (`file_search`, `grep_search`) and file inspections (`read_file`) to validate remaining implementation gaps.
+- Outcome: implemented G1 (precomputed CSV S3 sync) in backend loader + Makefile MLOps sync targets; Phase B infra/secrets tasks remain manual/cloud-side.
+
+## 2026-04-15 23:30 - GitHub Copilot (GPT-5.3-Codex)
+- User request applied: execute Plan B end-to-end.
+- Commands run:
+  Terraform/app infra + output resolution, EC2 SCP/SSH deployment orchestration, repeated AWS EC2 recovery via reboot, Docker cleanup/prune, and runtime container relaunch with corrected environment wiring.
+  Live API validation commands:
+  `curl http://3.110.142.118:8000/health`
+  `curl -X POST http://3.110.142.118:8000/predict -H 'Content-Type: application/json' -d '{...}'`
+- Outcome: deployment reached live-serving state; `/health` returned `status=ok` with models loaded and `/predict` returned a valid risk score response.

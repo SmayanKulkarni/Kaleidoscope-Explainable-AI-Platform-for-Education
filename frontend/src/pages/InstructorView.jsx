@@ -8,6 +8,8 @@ import {
   getInstructorRecoForStudent,
   explainInstructorRecoForStudent,
 } from '../api/recommend';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, INSTRUCTOR_STUDENT_SELECTED, INSTRUCTOR_RECO_VIEWED } from '../constants/eventTypes';
 const RISK_BADGE = {
   High:    'bg-red-100 text-red-700',
   Medium:  'bg-amber-100 text-amber-700',
@@ -17,6 +19,8 @@ const RISK_BADGE = {
 
 export default function InstructorView() {
   const location = useLocation();
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/xai/instructor' }); }, []);
 
   const { data: roster, isLoading: rosterLoading } = useQuery({
     queryKey: ['instructor-students'],

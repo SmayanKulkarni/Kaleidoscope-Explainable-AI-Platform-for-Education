@@ -3350,6 +3350,232 @@ def admin_delete_enrollment(enrollment_id: str, current_user=Depends(get_current
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Admin: sync OULAD seed users
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.post("/admin/sync-oulad")
+def admin_sync_oulad(current_user=Depends(get_current_user)):
+    """
+    Bulk-create users from data/oulad_seed_credentials.json.
+    Creates User + LearnerProfile/InstructorProfile + StudentSnapshot for each entry.
+    Skips existing users (matched by username).
+    """
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    import json as _json
+    from backend.app.auth.auth import hash_password
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import (
+        User, LearnerProfile, InstructorProfile, StudentSnapshot, CourseEnrollment,
+    )
+
+    seed_path = DATA_DIR / "oulad_seed_credentials.json"
+    if not seed_path.exists():
+        raise HTTPException(404, f"Seed file not found: {seed_path}")
+
+    with open(seed_path) as f:
+        entries = _json.load(f)
+
+    db = next(get_db())
+    stats = {"created_users": 0, "skipped_existing": 0, "snapshots_created": 0, "errors": []}
+    try:
+        for entry in entries:
+            username = entry.get("username")
+            if not username:
+                stats["errors"].append("Entry missing username")
+                continue
+            existing = db.query(User).filter(User.username == username).first()
+            if existing:
+                stats["skipped_existing"] += 1
+                continue
+
+            role = entry.get("role", "student")
+            user = User(
+                username=username,
+                email=entry.get("email", f"{username}@oulad.local"),
+                full_name=entry.get("full_name", username),
+                hashed_password=hash_password(entry.get("password", "OuladUser2026!")),
+                role=role,
+                is_active=True,
+            )
+            db.add(user)
+            db.flush()
+
+            if role == "student":
+                learner_id = entry.get("learner_id", f"learner_{user.id[:8]}")
+                lp_existing = db.query(LearnerProfile).filter(
+                    LearnerProfile.learner_id == learner_id
+                ).first()
+                if not lp_existing:
+                    lp = LearnerProfile(
+                        user_id=user.id,
+                        learner_id=learner_id,
+                        course_id=entry.get("course_id"),
+                    )
+                    db.add(lp)
+
+                    # Cold-start snapshot
+                    if not db.query(StudentSnapshot).filter(
+                        StudentSnapshot.learner_id == learner_id
+                    ).first():
+                        snap = StudentSnapshot(
+                            learner_id=learner_id,
+                            display_name=entry.get("full_name", username),
+                            current_module=entry.get("course_id"),
+                        )
+                        db.add(snap)
+                        stats["snapshots_created"] += 1
+
+            elif role == "instructor":
+                ip_existing = db.query(InstructorProfile).filter(
+                    InstructorProfile.user_id == user.id
+                ).first()
+                if not ip_existing:
+                    db.add(InstructorProfile(
+                        user_id=user.id,
+                        department=entry.get("department", "General"),
+                    ))
+
+            stats["created_users"] += 1
+
+        db.commit()
+        log.info("OULAD sync: created=%d  skipped=%d  snapshots=%d",
+                 stats["created_users"], stats["skipped_existing"], stats["snapshots_created"])
+        return stats
+    except Exception as e:
+        db.rollback()
+        log.error("OULAD sync failed: %s", e)
+        raise HTTPException(500, f"Sync failed: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/admin/students")
+def admin_list_all_students(current_user=Depends(get_current_user)):
+    """List ALL students in the system (admin-only)."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import User, LearnerProfile, StudentSnapshot
+    db = next(get_db())
+    try:
+        students = db.query(User).filter(User.role == "student").all()
+        result = []
+        for u in students:
+            lp = db.query(LearnerProfile).filter(LearnerProfile.user_id == u.id).first()
+            snap = None
+            if lp:
+                snap = db.query(StudentSnapshot).filter(
+                    StudentSnapshot.learner_id == lp.learner_id
+                ).first()
+            result.append({
+                "user_id":    u.id,
+                "username":   u.username,
+                "full_name":  u.full_name,
+                "email":      u.email,
+                "is_active":  u.is_active,
+                "last_login": u.last_login_at.isoformat() if u.last_login_at else None,
+                "learner_id": lp.learner_id if lp else None,
+                "course_id":  lp.course_id if lp else None,
+                "risk_score": snap.dropout_risk_score if snap else None,
+                "trajectory": snap.risk_trajectory if snap else None,
+            })
+        return {"students": result, "total": len(result)}
+    finally:
+        db.close()
+
+
+@app.post("/admin/enrollments/bulk")
+def admin_bulk_enroll(req: dict, current_user=Depends(get_current_user)):
+    """
+    Bulk-enroll multiple students under an instructor.
+    Body: { learner_ids: [...], instructor_profile_id: str, course_id: str }
+    """
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import CourseEnrollment, LearnerProfile, InstructorProfile
+    db = next(get_db())
+    try:
+        learner_ids = req.get("learner_ids", [])
+        instructor_profile_id = req.get("instructor_profile_id")
+        course_id = req.get("course_id", "CCC")
+
+        if not instructor_profile_id:
+            raise HTTPException(422, "instructor_profile_id required")
+        ip = db.query(InstructorProfile).filter(
+            InstructorProfile.id == instructor_profile_id
+        ).first()
+        if ip is None:
+            raise HTTPException(404, f"Instructor profile {instructor_profile_id!r} not found")
+
+        created, skipped, errors = 0, 0, []
+        for lid in learner_ids:
+            lp = db.query(LearnerProfile).filter(LearnerProfile.learner_id == lid).first()
+            if lp is None:
+                errors.append(f"learner_id={lid!r} not found")
+                continue
+            existing = db.query(CourseEnrollment).filter(
+                CourseEnrollment.learner_profile_id == lp.id,
+                CourseEnrollment.instructor_profile_id == instructor_profile_id,
+                CourseEnrollment.course_id == course_id,
+            ).first()
+            if existing:
+                skipped += 1
+                continue
+            db.add(CourseEnrollment(
+                learner_profile_id=lp.id,
+                instructor_profile_id=instructor_profile_id,
+                course_id=course_id,
+            ))
+            created += 1
+
+        db.commit()
+        log.info("Bulk enroll: created=%d skipped=%d errors=%d", created, skipped, len(errors))
+        return {"created": created, "skipped": skipped, "errors": errors}
+    finally:
+        db.close()
+
+
+@app.post("/admin/users/{user_id}/deactivate")
+def admin_deactivate_user(user_id: str, current_user=Depends(get_current_user)):
+    """Admin-only: soft-deactivate a user account."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import User
+    db = next(get_db())
+    try:
+        target = db.query(User).filter(User.id == user_id).first()
+        if target is None:
+            raise HTTPException(404, "User not found")
+        target.is_active = False
+        db.commit()
+        return {"user_id": user_id, "is_active": False}
+    finally:
+        db.close()
+
+
+@app.post("/admin/users/{user_id}/activate")
+def admin_activate_user(user_id: str, current_user=Depends(get_current_user)):
+    """Admin-only: reactivate a user account."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin only")
+    from backend.app.auth.database import get_db
+    from backend.app.auth.models import User
+    db = next(get_db())
+    try:
+        target = db.query(User).filter(User.id == user_id).first()
+        if target is None:
+            raise HTTPException(404, "User not found")
+        target.is_active = True
+        db.commit()
+        return {"user_id": user_id, "is_active": True}
+    finally:
+        db.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SPA catch-all — MUST be the very last route registered
 # ──────────────────────────────────────────────────────────────────────────────
 # This serves index.html for any path not matched by an API route above,

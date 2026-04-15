@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { login as apiLogin, register as apiRegister, getMe } from '../api/auth';
+import { setLearnerId } from '../services/eventTracker';
 
 const AuthContext = createContext(null);
 
@@ -29,8 +30,13 @@ export const AuthProvider = ({ children }) => {
       ]);
 
     withTimeout(getMe())
-      .then((me) => setUser(_flatten(me)))
+      .then((me) => {
+        const flat = _flatten(me);
+        setUser(flat);
+        if (flat?.learner_id) setLearnerId(flat.learner_id);
+      })
       .catch(() => {
+        setLearnerId(null);
         localStorage.removeItem('ll_token');
         localStorage.removeItem('ll_user');
         localStorage.removeItem('ll_learner_id');
@@ -45,6 +51,7 @@ export const AuthProvider = ({ children }) => {
     const me = _flatten(await getMe());
     localStorage.setItem('ll_user', JSON.stringify(me));
     setUser(me);
+    if (me?.learner_id) setLearnerId(me.learner_id);
     return me;
   };
 
@@ -57,6 +64,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('ll_token');
     localStorage.removeItem('ll_user');
     localStorage.removeItem('ll_learner_id');
+    setLearnerId(null);
     setUser(null);
   };
 

@@ -1,6 +1,8 @@
-import { lazy, useState } from 'react';
+import { lazy, useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, EXPLAIN_REQUESTED, RECOMMENDATION_VIEWED } from '../constants/eventTypes';
 import { useExplain } from '../hooks/useExplain';
 import { useRecommendStudent } from '../hooks/useRecommend';
 import { recommendStudentExplain } from '../api/recommend';
@@ -42,6 +44,8 @@ export default function StudentView() {
   const { user } = useAuth();
   const learner_id = user?.learner_id ?? user?.id ?? 'anonymous';
 
+  useEffect(() => { track(PAGE_VIEW, { page: '/xai/student' }); }, []);
+
   const { data: features, isLoading: featuresLoading } = useQuery({
     queryKey: ['student-view-features', learner_id],
     queryFn: () => fetchLearnerFeatures(learner_id),
@@ -69,6 +73,7 @@ export default function StudentView() {
     setSelectedReco(item);
     setRecoExplain(null);
     recoExplainMutation.mutate(item);
+    track(EXPLAIN_REQUESTED, { target: item.item_id ?? 'unknown', value: item.score ?? null });
   };
 
   const recommendations = recoData?.recommendations ?? [];

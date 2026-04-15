@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 _BUCKET = os.getenv("AWS_S3_BUCKET", "")
 _REGION = os.getenv("AWS_REGION", "ap-south-1")
 _PREFIX = os.getenv("AWS_S3_PREFIX", "models/").rstrip("/") + "/"
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Artifacts to sync between S3 and local models/
 _MODEL_FILES = [
@@ -42,10 +43,20 @@ _MODEL_FILES = [
     "tuning_summary.json",
     "model_version.json",
     "model_manifest.json",
+    "recommendation_training_summary.json",
 ]
 
 # Engagement model directory (entire dir synced)
 _ENG_DIR = "engagement/"
+
+# Recommender model directory (entire dir synced)
+_RECO_DIR = "recommenders/"
+
+# Precomputed recommendation CSVs stored outside models/
+_PRECOMPUTED_FILES = [
+    ("data/recommendations/precomputed/student_topk.csv", "precomputed/student_topk.csv"),
+    ("data/recommendations/precomputed/instructor_topk.csv", "precomputed/instructor_topk.csv"),
+]
 
 
 def _boto3_client():
@@ -115,6 +126,43 @@ def download_models(models_dir: Path) -> list[str]:
     except Exception as e:
         log.warning("S3 engagement model list/download failed: %s", e)
 
+    # Download recommender model directory
+    reco_dir = models_dir / "recommenders"
+    try:
+        paginator = client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=_BUCKET, Prefix=f"{_PREFIX}{_RECO_DIR}")
+        for page in pages:
+            for obj in page.get("Contents", []):
+                key      = obj["Key"]
+                rel_path = key[len(_PREFIX):]
+                local    = models_dir / rel_path
+                local.parent.mkdir(parents=True, exist_ok=True)
+                if not local.exists():
+                    log.info("S3 download  s3://%s/%s → %s", _BUCKET, key, local)
+                    client.download_file(_BUCKET, key, str(local))
+                    downloaded.append(rel_path)
+    except Exception as e:
+        log.warning("S3 recommender model list/download failed: %s", e)
+
+    # Download precomputed recommendation CSVs
+    for local_rel, s3_rel in _PRECOMPUTED_FILES:
+        local_path = _PROJECT_ROOT / local_rel
+        s3_key = f"{_PREFIX}{s3_rel}"
+        if local_path.exists():
+            log.debug("S3 skip (exists): %s", local_rel)
+            continue
+        try:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            log.info("S3 download  s3://%s/%s → %s", _BUCKET, s3_key, local_path)
+            client.download_file(_BUCKET, s3_key, str(local_path))
+            downloaded.append(local_rel)
+        except client.exceptions.ClientError as e:
+            code = e.response["Error"]["Code"]
+            if code == "404":
+                log.warning("S3 key not found: s3://%s/%s (skipping)", _BUCKET, s3_key)
+            else:
+                log.error("S3 download error for %s: %s", local_rel, e)
+
     log.info("S3 download complete  files=%d", len(downloaded))
     return downloaded
 
@@ -163,6 +211,33 @@ def upload_models(models_dir: Path) -> list[str]:
                     uploaded.append(s3_key)
                 except Exception as e:
                     log.error("S3 upload error for %s: %s", local_path, e)
+
+    # Upload recommender model directory
+    reco_dir = models_dir / "recommenders"
+    if reco_dir.exists():
+        for local_path in reco_dir.rglob("*"):
+            if local_path.is_file():
+                rel = local_path.relative_to(models_dir)
+                s3_key = f"{_PREFIX}{rel.as_posix()}"
+                try:
+                    log.info("S3 upload  %s → s3://%s/%s", local_path, _BUCKET, s3_key)
+                    client.upload_file(str(local_path), _BUCKET, s3_key)
+                    uploaded.append(s3_key)
+                except Exception as e:
+                    log.error("S3 upload error for %s: %s", local_path, e)
+
+    # Upload precomputed recommendation CSVs
+    for local_rel, s3_rel in _PRECOMPUTED_FILES:
+        local_path = _PROJECT_ROOT / local_rel
+        if not local_path.exists():
+            continue
+        s3_key = f"{_PREFIX}{s3_rel}"
+        try:
+            log.info("S3 upload  %s → s3://%s/%s", local_path, _BUCKET, s3_key)
+            client.upload_file(str(local_path), _BUCKET, s3_key)
+            uploaded.append(s3_key)
+        except Exception as e:
+            log.error("S3 upload error for %s: %s", local_path, e)
 
     log.info("S3 upload complete  keys=%d", len(uploaded))
     return uploaded

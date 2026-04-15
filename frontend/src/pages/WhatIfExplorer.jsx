@@ -1,14 +1,18 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { useAuth } from '../context/AuthContext';
 import { whatif, DEFAULT_FEATURES, MUTABLE_FEATURES } from '../api/dropout';
 import { getInstructorStudents, instructorWhatIfForStudent } from '../api/recommend';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, WHATIF_RUN } from '../constants/eventTypes';
 
 export default function WhatIfExplorer() {
   const { user } = useAuth();
   const isInstructor = user?.role === 'instructor';
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/what-if' }); }, []);
 
   const { data: roster } = useQuery({
     queryKey: ['instructor-students'],
@@ -41,7 +45,10 @@ export default function WhatIfExplorer() {
     setOverrides(newOv);
   };
 
-  const handleRun = () => whatifMutation.mutate();
+  const handleRun = () => {
+    track(WHATIF_RUN, { target: selectedStudentId ?? 'self', value: Object.keys(overrides).length });
+    whatifMutation.mutate();
+  };
 
   const handleReset = () => {
     setOverrides({});

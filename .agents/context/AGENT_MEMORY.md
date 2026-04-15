@@ -3,9 +3,13 @@
 > **Purpose:** This file acts as the active context boundary (memory) for cross-IDE agents. It tracks the current focus, major architectural decisions, and open problems. Agents must READ this file upon initialization and UPDATE it when changing major contexts.
 
 ## Current Sprint Goal
-- **Sprint:** AWS Deployment + ML Feedback Loop — **COMPLETE**
-- All deployment infrastructure (Docker, PostgreSQL, S3, Terraform, CI/CD, Alembic) is implemented and tested.
-- Implicit feedback retraining pipeline (engagement autoencoder + GBM retrain) is implemented.
+- **Sprint:** Production Readiness — Frontend Polish + Admin Workflows — **COMPLETE**
+- Implicit event tracking wired into all 11 frontend pages via `useEventTracker` hook.
+- Backend registration auto-generates `learner_id` and creates cold-start `StudentSnapshot` for new students.
+- Admin backend endpoints: `POST /admin/sync-oulad`, `GET /admin/students`, `POST /admin/enrollments/bulk`.
+- AdminDashboard UI: OULAD Sync button, full user table with activate/deactivate, risk badges.
+- Navbar/Sidebar: admin role routing, Sign Out button, expanded admin sidebar links.
+- S3 loader: recommender artifacts (recommenders/) now included in upload/download sync.
 - Next action: provision AWS infrastructure and push first deploy.
 
 ---
@@ -17,7 +21,8 @@
 - **Phase 4 Implicit Feedback:** COMPLETE — engagement autoencoder, retrain pipeline, hot-reload.
 - **Phase 5 Deployment:** COMPLETE — Docker, PostgreSQL migration, S3, Terraform, GitHub Actions, Alembic, test suite.
 - **Stress Testing:** COMPLETE in `astro` env for `tests/test_stress.py` after event alias compatibility fix (25/25 pass).
-- **MLOps Hardening (Phase 0):** IN PROGRESS — `/mlops/retrain` and `/mlops/reload` now protected by admin JWT or automation token; retrain/reload serialization lock added.
+- **MLOps Hardening (Phase 0):** COMPLETE — `/mlops/retrain` and `/mlops/reload` now protected by admin JWT or automation token; retrain/reload serialization lock added.
+- **Phase 6 Frontend Polish:** COMPLETE — Event tracking on all pages, admin dashboard UI, Navbar/Sidebar role-aware routing, Sign Out, S3 recommender sync.
 
 ### Architecture Summary
 - **Models:** GBM (primary), RF (comparison), LSTM (temporal), EngagementAutoencoder (implicit → latent).

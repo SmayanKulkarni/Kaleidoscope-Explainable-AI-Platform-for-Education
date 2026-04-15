@@ -96,3 +96,15 @@
 - Renamed frontend product branding from LearnLens to Kaliedoscope.
 - Updated visible brand labels in navbar, login, register, and HTML page title.
 - Verified no remaining `LearnLens` references in frontend source paths.
+
+## 2026-04-15 20:32 - GitHub Copilot (GPT-5.3-Codex)
+- Implemented S3 sync support for precomputed recommendation CSV artifacts in `backend/app/model/s3_loader.py`.
+- Added `_PRECOMPUTED_FILES` mapping and integrated download/upload logic for `student_topk.csv` and `instructor_topk.csv` under `models/precomputed/` on S3.
+- Updated `Makefile` MLOps targets so `make models-upload` and `make models-download` also sync `data/recommendations/precomputed/`.
+- Verified backend module syntax with `python -m py_compile backend/app/model/s3_loader.py` in project `.venv`.
+
+## 2026-04-15 23:30 - GitHub Copilot (GPT-5.3-Codex)
+- Executed Phase B cloud rollout operationally on AWS: Terraform infra apply, model artifact upload to S3, and EC2 container deployment retries.
+- Updated `Dockerfile` deployment path for EC2 constraints: removed frontend build stage, switched Docker dependency resolution to CPU torch wheels, and added explicit `psycopg` installation.
+- Completed live deployment using the EC2 runtime image with corrected runtime env wiring (`DATABASE_URL` credentials/db name + SSL and `AWS_S3_BUCKET` export).
+- Verified production endpoints on `http://3.110.142.118:8000`: `/health` returned `status=ok` with loaded models, and `/predict` returned a valid risk response payload.

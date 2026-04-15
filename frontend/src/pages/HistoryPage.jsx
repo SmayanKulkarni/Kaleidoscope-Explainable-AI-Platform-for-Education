@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { getMyHistory, getLearnerHistory } from '../api/history';
 import { getInstructorStudents } from '../api/recommend';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, HISTORY_VIEWED } from '../constants/eventTypes';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 function fmt(isoStr) {
@@ -259,6 +261,8 @@ function SkeletonCard() {
 export default function HistoryPage() {
   const { user } = useAuth();
   const isInstructor = user?.role === 'instructor' || user?.role === 'admin';
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/history' }); }, []);
 
   const [selectedLearnerId, setSelectedLearnerId] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);

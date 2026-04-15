@@ -12,7 +12,7 @@ terraform {
   # Bootstrap: create this bucket manually once before `terraform init`.
   # Comment out this block on first run if the state bucket doesn't exist yet.
   backend "s3" {
-    bucket         = "xai-rec-tf-state"
+    bucket         = "xai-rec-tf-state-651706739956"
     key            = "production/terraform.tfstate"
     region         = "ap-south-1"
     encrypt        = true

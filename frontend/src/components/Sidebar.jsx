@@ -6,7 +6,7 @@ import { recommendHealth } from '../api/recommend';
 import AIHelpModal from './AIHelpModal';
 
 export default function Sidebar() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [aiModalOpen, setAiModalOpen] = useState(false);
@@ -44,6 +44,9 @@ export default function Sidebar() {
     { to: '/instructor', icon: 'groups', label: 'Instructor View' },
     { to: '/student', icon: 'dashboard', label: 'Student View' },
     { to: '/xai/instructor', icon: 'psychology', label: 'XAI Tools' },
+    { to: '/what-if', icon: 'science', label: 'What-If Explorer' },
+    { to: '/simulate', icon: 'timeline', label: 'Simulate Future' },
+    { to: '/xai/compare', icon: 'compare', label: 'Model Compare' },
     { to: '/instructor/history', icon: 'history', label: 'History' },
   ];
 
@@ -114,12 +117,19 @@ export default function Sidebar() {
       </div>
 
       <div className="border-t border-outline-variant/10 mt-auto pb-8">
-        <a className="text-slate-600 hover:bg-blue-50 py-3 px-6 flex items-center gap-3 font-label text-sm transition-all" href="#">
+        <button
+          onClick={() => navigate('/login')}
+          className="w-full text-left text-slate-600 hover:bg-blue-50 py-3 px-6 flex items-center gap-3 font-label text-sm transition-all"
+        >
           <span className="material-symbols-outlined">settings</span> Settings
-        </a>
-        <a className="text-slate-600 hover:bg-blue-50 py-3 px-6 flex items-center gap-3 font-label text-sm transition-all" href="#">
-          <span className="material-symbols-outlined">help_outline</span> Support
-        </a>
+        </button>
+        <button
+          onClick={() => { logout(); navigate('/login'); }}
+          className="w-full text-left text-error hover:bg-error/10 py-3 px-6 flex items-center gap-3 font-label text-sm transition-all"
+          title="Sign Out"
+        >
+          <span className="material-symbols-outlined">logout</span> Sign Out
+        </button>
       </div>
       <AIHelpModal
         isOpen={aiModalOpen}

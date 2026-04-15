@@ -1,31 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # XAI Learning Recommendation System — Multi-stage Docker build
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 0: Build the React frontend (Node.js)
 # Stage 1: Install Python dependencies into /install
-# Stage 2: Combine — runtime Python image with built frontend + app code
+# Stage 2: Runtime image with backend app code
 #
 # Models (~90MB) are NOT baked in — downloaded from S3 at container startup.
 # SQLite is replaced by PostgreSQL via DATABASE_URL env var.
 # ─────────────────────────────────────────────────────────────────────────────
-
-# ── Stage 0: Frontend builder (Node.js) ──────────────────────────────────────
-FROM node:20-alpine AS frontend-builder
-
-WORKDIR /frontend
-
-# Install deps first (layer cached unless package.json changes)
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --prefer-offline
-
-# Copy source and build
-# vite.config.js sets outDir: '../backend/static', but inside this stage
-# that resolves to /frontend/../backend/static = /backend/static.
-# We override outDir explicitly to write into /frontend/dist instead,
-# then copy it to the right place in Stage 2.
-COPY frontend/ .
-RUN npm run build -- --outDir /frontend/dist
-
 
 # ── Stage 1: Python dependency builder ───────────────────────────────────────
 FROM python:3.11-slim AS builder
@@ -39,7 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN sed 's/^torch==2\.6\.0$/torch==2.6.0+cpu/' requirements.txt > /tmp/requirements.docker.txt && \
+    pip install --no-cache-dir --prefix=/install \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r /tmp/requirements.docker.txt && \
+    pip install --no-cache-dir --prefix=/install "psycopg[binary]==3.2.9"
 
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
@@ -59,12 +44,8 @@ COPY --from=builder /install /usr/local
 COPY backend/ ./backend/
 COPY data/fixtures/ ./data/fixtures/
 
-# Copy the built React frontend into the FastAPI static directory
-# FastAPI's StaticFiles mount and SPA catch-all route (main.py) will serve it.
-COPY --from=frontend-builder /frontend/dist/ ./backend/static/
-
 # Create directories that will be populated at runtime
-RUN mkdir -p models data mlruns
+RUN mkdir -p models data mlruns backend/static/assets
 
 # Non-root user for security
 RUN addgroup --system xai && adduser --system --ingroup xai xaiuser

@@ -32,6 +32,7 @@ from backend.app.auth.models import (
     CourseEnrollment,
     InstructorProfile,
     LearnerProfile,
+    StudentSnapshot,
     User,
 )
 from backend.app.auth.schemas import (
@@ -67,9 +68,10 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_409_CONFLICT, f"Email '{req.email}' already registered")
 
     if req.role == "student":
+        # Auto-generate learner_id when not provided (new student self-registration)
         if not req.learner_id:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "students must provide learner_id")
+            import uuid as _uuid_mod
+            req.learner_id = f"learner_{_uuid_mod.uuid4().hex[:8]}"
         if db.query(LearnerProfile).filter(LearnerProfile.learner_id == req.learner_id).first():
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 f"learner_id '{req.learner_id}' already registered")
@@ -96,6 +98,17 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         )
         db.add(lp)
         learner_id_out = req.learner_id
+
+        # Cold-start snapshot so student dashboard renders immediately
+        if not db.query(StudentSnapshot).filter(StudentSnapshot.learner_id == req.learner_id).first():
+            snap = StudentSnapshot(
+                learner_id   = req.learner_id,
+                display_name = req.full_name or req.username,
+                current_module      = req.course_id,
+                current_week_in_course = 1,
+                prior_course_completions = req.prior_completions or 0,
+            )
+            db.add(snap)
 
     elif req.role == "instructor":
         ip = InstructorProfile(

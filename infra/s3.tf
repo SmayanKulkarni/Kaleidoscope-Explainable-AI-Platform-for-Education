@@ -39,6 +39,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "models" {
     id     = "expire-old-model-versions"
     status = "Enabled"
 
+    filter {}
+
     noncurrent_version_expiration {
       noncurrent_days = 30
     }

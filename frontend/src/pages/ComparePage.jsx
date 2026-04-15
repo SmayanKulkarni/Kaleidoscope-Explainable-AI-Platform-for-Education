@@ -1,6 +1,8 @@
-import { lazy, useState, useMemo } from 'react';
+import { lazy, useState, useMemo, useEffect } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, COMPARE_RUN } from '../constants/eventTypes';
 import { useCompare } from '../hooks/useCompare';
 import { DEFAULT_FEATURES } from '../api/dropout';
 import { compareNarrate, getInstructorStudents } from '../api/recommend';
@@ -25,6 +27,8 @@ export default function ComparePage() {
   const isInstructor = user?.role === 'instructor' || user?.role === 'admin';
   const [selectedStudentId, setSelectedStudentId] = useState(null);
   const [narration, setNarration] = useState(null);
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/xai/compare' }); }, []);
 
   // Instructor/admin: load student roster for picker
   const { data: roster } = useQuery({

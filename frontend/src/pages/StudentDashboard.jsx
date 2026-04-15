@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import AIHelpModal from '../components/AIHelpModal';
 import { getStudentData } from '../services/xaiService';
 import { useAuth } from '../context/AuthContext';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, RECOMMENDATION_VIEWED } from '../constants/eventTypes';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -12,6 +14,8 @@ export default function StudentDashboard() {
   const [aiModalOpen, setAiModalOpen] = useState(false);
 
   const learner_id = user?.learner_id ?? localStorage.getItem('ll_learner_id') ?? 'anonymous';
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/student' }); }, []);
   const { data, isLoading } = useQuery({
     queryKey: ['student-dashboard', learner_id],
     queryFn: () => getStudentData({ learner_id, audience: 'learner' }),

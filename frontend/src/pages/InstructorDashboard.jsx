@@ -1,9 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import Sidebar from '../components/Sidebar';
 import { getInstructorStudents } from '../api/recommend';
+import { track } from '../services/eventTracker';
+import { PAGE_VIEW, INSTRUCTOR_STUDENT_SELECTED } from '../constants/eventTypes';
 
 const RISK_COLORS = {
   High:    { bg: 'bg-red-100',   text: 'text-red-700',   bar: 'bg-red-500'   },
@@ -23,6 +25,8 @@ export default function InstructorDashboard() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('risk_desc');
+
+  useEffect(() => { track(PAGE_VIEW, { page: '/instructor' }); }, []);
 
   const { data: roster, isLoading, isError } = useQuery({
     queryKey: ['instructor-students'],
